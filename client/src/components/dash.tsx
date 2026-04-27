@@ -1,0 +1,358 @@
+// Shared dashboard primitives: scorecards, stoplight badges, progress rings.
+import { ReactNode } from "react";
+import { cn } from "@/lib/utils";
+import { StoplightStatus } from "@/lib/data";
+import { ArrowUp, ArrowDown } from "lucide-react";
+
+export function Section({
+  title,
+  subtitle,
+  actions,
+  children,
+  className,
+}: {
+  title?: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={cn("space-y-3", className)}>
+      {(title || subtitle || actions) && (
+        <div className="flex items-end justify-between gap-3 flex-wrap">
+          <div className="bb-section-header">
+            {title && (
+              <h2 className="text-xs uppercase tracking-[0.14em] text-foreground/80 font-semibold">
+                {title}
+              </h2>
+            )}
+            {subtitle && (
+              <p className="text-[12px] text-muted-foreground/80 mt-0.5">
+                {subtitle}
+              </p>
+            )}
+          </div>
+          {actions}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+export function Card({
+  children,
+  className,
+  padding = "p-4",
+  glow,
+}: {
+  children: ReactNode;
+  className?: string;
+  padding?: string;
+  glow?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border bg-card text-card-foreground shadow-sm transition-shadow hover:shadow-md",
+        glow && "bb-hero-glow",
+        padding,
+        className,
+      )}
+      style={{ borderColor: "hsl(var(--card-border))" }}
+    >
+      {children}
+    </div>
+  );
+}
+
+export function StoplightDot({
+  status,
+  className,
+}: {
+  status: StoplightStatus;
+  className?: string;
+}) {
+  const bg =
+    status === "green"
+      ? "bg-status-green"
+      : status === "yellow"
+        ? "bg-status-yellow"
+        : "bg-status-red";
+  return (
+    <span
+      aria-label={`Status: ${status}`}
+      className={cn("inline-block h-2.5 w-2.5 rounded-full", bg, className)}
+    />
+  );
+}
+
+export function StoplightBadge({
+  status,
+  label,
+}: {
+  status: StoplightStatus;
+  label?: string;
+}) {
+  const cls =
+    status === "green"
+      ? "status-green-bg"
+      : status === "yellow"
+        ? "status-yellow-bg"
+        : "status-red-bg";
+  const defaultLabel =
+    status === "green" ? "On Target" : status === "yellow" ? "Close" : "Below";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        cls,
+      )}
+    >
+      <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
+      {label ?? defaultLabel}
+    </span>
+  );
+}
+
+export function Scorecard({
+  label,
+  value,
+  sub,
+  trend,
+  status,
+  size = "md",
+  accent,
+  className,
+}: {
+  label: string;
+  value: string | number;
+  sub?: ReactNode;
+  trend?: { dir: "up" | "down"; value: string; positive?: boolean };
+  status?: StoplightStatus;
+  size?: "sm" | "md" | "lg" | "xl";
+  accent?: boolean;
+  className?: string;
+}) {
+  const valueClass = {
+    sm: "text-xl",
+    md: "text-2xl",
+    lg: "text-3xl",
+    xl: "text-5xl",
+  }[size];
+  return (
+    <Card className={className} padding="p-0">
+      <div className="bb-card-header-sm">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.12em] font-semibold" style={{ color: "hsl(var(--baby-blue-700))" }}>
+              {label}
+            </div>
+          </div>
+          {status && <StoplightDot status={status} />}
+        </div>
+      </div>
+      <div className="px-4 pb-3 pt-1">
+        <div
+          className={cn(
+            "scorecard tabular",
+            valueClass,
+            accent ? "text-primary" : "text-foreground",
+          )}
+        >
+          {value}
+        </div>
+        {(sub || trend) && (
+          <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+            {trend && (
+              <span
+                className={cn(
+                  "inline-flex items-center gap-0.5 font-semibold",
+                  trend.positive ?? trend.dir === "up"
+                    ? "text-status-green"
+                    : "text-status-red",
+                )}
+              >
+                {trend.dir === "up" ? (
+                  <ArrowUp className="h-3 w-3" />
+                ) : (
+                  <ArrowDown className="h-3 w-3" />
+                )}
+                {trend.value}
+              </span>
+            )}
+            {sub && <span className="truncate">{sub}</span>}
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+export function ProgressBar({
+  value,
+  max,
+  status,
+  className,
+  showLabel = false,
+}: {
+  value: number;
+  max: number;
+  status?: StoplightStatus;
+  className?: string;
+  showLabel?: boolean;
+}) {
+  const pct = Math.min(100, Math.max(0, (value / max) * 100));
+  const bar =
+    status === "green"
+      ? "bg-status-green"
+      : status === "yellow"
+        ? "bg-status-yellow"
+        : status === "red"
+          ? "bg-status-red"
+          : "bg-primary";
+  return (
+    <div className={cn("space-y-1", className)}>
+      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+        <div
+          className={cn("h-full rounded-full transition-all", bar)}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      {showLabel && (
+        <div className="text-[11px] text-muted-foreground num">
+          {pct.toFixed(0)}%
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Circular progress ring — for hero KPI (revenue goal)
+export function ProgressRing({
+  value,
+  max,
+  size = 150,
+  stroke = 12,
+  label,
+  sub,
+  accent = "primary",
+}: {
+  value: number;
+  max: number;
+  size?: number;
+  stroke?: number;
+  label?: ReactNode;
+  sub?: ReactNode;
+  accent?: "primary" | "green" | "yellow" | "red";
+}) {
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = Math.min(1, value / max);
+  const offset = circumference * (1 - pct);
+
+  const colorVar =
+    accent === "green"
+      ? "var(--status-green)"
+      : accent === "yellow"
+        ? "var(--status-yellow)"
+        : accent === "red"
+          ? "var(--status-red)"
+          : "var(--primary)";
+
+  return (
+    <div className="relative inline-flex items-center justify-center">
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke="hsl(var(--muted))"
+          strokeWidth={stroke}
+          fill="none"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          stroke={`hsl(${colorVar})`}
+          strokeWidth={stroke}
+          strokeLinecap="butt"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          fill="none"
+          style={{ transition: "stroke-dashoffset 0.8s cubic-bezier(0.2, 0.6, 0.2, 1)" }}
+        />
+      </svg>
+      <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+        {label && (
+          <div className="scorecard tabular text-2xl text-foreground">
+            {label}
+          </div>
+        )}
+        {sub && (
+          <div className="text-[10px] uppercase tracking-[0.12em] text-muted-foreground mt-0.5 px-2">
+            {sub}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Stat row inside cards — compact label/value pair
+export function StatRow({
+  label,
+  value,
+  sub,
+  status,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  status?: StoplightStatus;
+}) {
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b last:border-b-0" style={{ borderColor: "hsl(var(--card-border))" }}>
+      <div className="flex items-center gap-1.5 min-w-0">
+        {status && <StoplightDot status={status} />}
+        <div className="text-[13px] text-muted-foreground">{label}</div>
+      </div>
+      <div className="text-right">
+        <div className="text-[13px] font-semibold num">{value}</div>
+        {sub && <div className="text-[10px] text-muted-foreground num">{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Tab label for wall-screen section headers
+export function PageHeader({
+  eyebrow,
+  title,
+  children,
+}: {
+  eyebrow?: string;
+  title: string;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="mb-5">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          {eyebrow && (
+            <div className="text-[10px] uppercase tracking-[0.16em] font-semibold mb-0.5" style={{ color: "hsl(var(--baby-blue-500))" }}>
+              {eyebrow}
+            </div>
+          )}
+          <h2 className="text-xl font-bold tracking-tight">
+            {title}
+          </h2>
+        </div>
+        {children}
+      </div>
+      <div className="bb-divider mt-3" />
+    </div>
+  );
+}

@@ -1,0 +1,43 @@
+# Render service definition for the MTHS KPI Dashboard backend.
+#
+# Deployment notes:
+#   - This file describes a single Node web service running the Express bundle.
+#   - Secrets (GOOGLE_SERVICE_ACCOUNT_JSON, ASANA_PAT) are NOT committed here —
+#     set them in the Render dashboard under Service → Environment.
+#   - The service responds to API calls from the Netlify-hosted frontend at
+#     kpi.mytennesseehomesolution.com.
+#
+# To deploy via "Blueprint" in Render: point Render at this file and it will
+# create the service. Alternatively, create the service manually in the UI
+# using the same build/start commands and env vars.
+
+services:
+  - type: web
+    name: mths-kpi-api
+    runtime: node
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: false
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "20"
+      - key: ASANA_WORKSPACE_GID
+        value: "471974462137775"
+      - key: ACCESS_CODE
+        value: mths2026
+      # CORS_ALLOWED_ORIGINS — comma-separated list of frontend origins.
+      # Update once the Netlify subdomain is known. The custom domain entry
+      # is the long-term target; the *.netlify.app entry is for testing.
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://kpi.mytennesseehomesolution.com
+      # Secrets — set values in Render dashboard, NOT here:
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: ASANA_PAT
+        sync: false

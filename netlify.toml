@@ -1,0 +1,52 @@
+# Netlify config for the MTHS KPI Dashboard frontend.
+#
+# This deploy serves ONLY the Vite-built React frontend from dist/public/.
+# All /api/* requests are proxied to the Render-hosted backend so the browser
+# only ever talks to one origin (kpi.mytennesseehomesolution.com), which keeps
+# CORS simple.
+#
+# Required Netlify build env vars: NONE.
+#   VITE_API_BASE_URL is intentionally NOT set — the frontend uses relative
+#   /api URLs and Netlify proxies them to Render below. This keeps the browser
+#   on a single origin (no CORS, no cookie weirdness).
+#
+# Custom domain: kpi.mytennesseehomesolution.com (CNAME at Wix → <site>.netlify.app)
+
+[build]
+  base = "."
+  command = "npm install && npm run build"
+  publish = "dist/public"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # NPM_FLAGS keeps optional native deps (better-sqlite3 etc.) from blocking
+  # the frontend-only build. The build script still runs the server bundle but
+  # only dist/public is published.
+  NPM_FLAGS = "--legacy-peer-deps"
+
+# Proxy /api/* to the Render backend. The frontend can keep using relative
+# /api URLs and the browser never sees a cross-origin call.
+# IMPORTANT: replace the :splat target host once the Render service URL is
+# known. Until then the literal URL below is used.
+[[redirects]]
+  from = "/api/*"
+  to = "https://mths-kpi-api.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+# SPA fallback — all non-asset routes serve index.html.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Long cache for hashed assets, no cache for index.html.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache, no-store, must-revalidate"
