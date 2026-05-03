@@ -155,6 +155,37 @@ function parseFloat2(s: string | undefined): number {
   return parseFloat(s.replace(/[,$\s]/g, "")) || 0;
 }
 
+// ========== DATE PARSING (Historic Deal KPIs is messy: M/D/YY, M/D/YYYY, ISO, MM/DD/YY) ==========
+function parseFlexDate(s: string | undefined): Date | null {
+  if (!s || typeof s !== "string") return null;
+  const t = s.trim();
+  if (!t) return null;
+  // ISO format YYYY-MM-DD
+  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) {
+    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // M/D/YY or MM/DD/YYYY
+  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+  if (m) {
+    let yr = Number(m[3]);
+    if (yr < 100) yr = yr < 50 ? 2000 + yr : 1900 + yr;
+    const d = new Date(yr, Number(m[1]) - 1, Number(m[2]));
+    return isNaN(d.getTime()) ? null : d;
+  }
+  // Fallback: native parse
+  const d = new Date(t);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function daysBetween(a: Date | null, b: Date | null): number | null {
+  if (!a || !b) return null;
+  const ms = b.getTime() - a.getTime();
+  if (ms < 0) return null;
+  return Math.round(ms / (1000 * 60 * 60 * 24));
+}
+
 // ========== MONTH MAPPING ==========
 
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -205,6 +236,7 @@ export async function fetchAllKpiData() {
       { label: "pipeRisk", spreadsheetId: TC_TRACKER, sheetName: "Pipeline & Risk Dashboard" },
       { label: "riseCurrent", spreadsheetId: SALES_STOPLIGHT, sheetName: currentRiseTab },
       { label: "risePrev",    spreadsheetId: SALES_STOPLIGHT, sheetName: prevRiseTab },
+      { label: "historic", spreadsheetId: MASTER_KPIS, sheetName: "Historic Deal KPIs" },
     ]),
     fetchAllSprintsThisYear(_now).catch((e) => {
       console.error(`[asana] sprint fetch failed: ${(e?.message || "").slice(0, 200)}`);
@@ -1688,6 +1720,162 @@ export async function fetchAllKpiData() {
     `Rev Tracker actual $${revenueTracker.ytdActualRevenue.toLocaleString()}.`
   );
 
+  // ================================================================
+  // CASH CONVERSION CYCLE — Historic Deal KPIs sheet
+  // Stages: Lead Created → Net Lead → Appt Set → Appt Executed → UC →
+  //         Pushed → Assigned → Closed (8 dates → 7 stage durations + total)
+  // ================================================================
+  const histData = sheets.historic || { headers: [], rows: [], rowCount: 0 };
+  const COL_LEAD_CREATED = "Lead Created Date";
+  const COL_NET_LEAD     = "Net Lead Created Date";
+  const COL_APPT_SET     = "Appt Set Date";
+  const COL_APPT_EXEC    = "Appt Executed Date";
+  const COL_UC           = "UC Date";
+  const COL_PUSHED       = "Pushed Date";
+  const COL_ASSIGNED     = "Date Assigned";
+  const COL_CLOSED       = "Close Date";
+  const COL_PROFIT       = "Profit";
+  const COL_PRICE        = "Purchase Price";
+  const COL_SALE         = "Sale Price";
+  const COL_PUSH_PX      = "Pushed Price";
+  const COL_ASSIGN_PX    = "Assigned Price";
+  const COL_ADDRESS      = "Street Address";
+  const COL_CITY         = "City";
+  const COL_ZIP          = "Zip Code";
+  const COL_BED          = "Bed";
+  const COL_BATH         = "Bath";
+  const COL_SQFT         = "Square Feet";
+  const COL_YEAR_BUILT   = "Year Build";
+  const COL_LEAD_SRC     = "Marketing Lead Source";
+  const COL_DEAL_TYPE    = "Deal Type";
+  const COL_LEAD_MGR     = "Lead Manager";
+  const COL_AQ           = "AQ Agent";
+  const COL_DISPO        = "Dispo Manager";
+  const COL_TC           = "TC";
+
+  type CCCDeal = {
+    address: string;
+    city: string;
+    zip: string;
+    bed: number;
+    bath: number;
+    sqft: number;
+    yearBuilt: number;
+    leadSource: string;
+    dealType: string;
+    leadManager: string;
+    aqAgent: string;
+    dispoManager: string;
+    tc: string;
+    purchasePrice: number;
+    salePrice: number;
+    profit: number;
+    closeDate: string;       // ISO YYYY-MM-DD or empty
+    leadCreated: string;
+    closeDateMs: number | null;
+    // Stage durations (days). null when either bookend date is missing.
+    days_lead_to_net: number | null;
+    days_net_to_apptSet: number | null;
+    days_apptSet_to_apptExec: number | null;
+    days_apptExec_to_uc: number | null;
+    days_uc_to_pushed: number | null;
+    days_pushed_to_assigned: number | null;
+    days_assigned_to_closed: number | null;
+    days_total: number | null; // lead created → closed
+  };
+
+  const cccDeals: CCCDeal[] = [];
+  for (const r of histData.rows || []) {
+    const closed = parseFlexDate(r[COL_CLOSED]);
+    if (!closed) continue; // only count completed deals
+    const leadC  = parseFlexDate(r[COL_LEAD_CREATED]);
+    const netL   = parseFlexDate(r[COL_NET_LEAD]);
+    const apS    = parseFlexDate(r[COL_APPT_SET]);
+    const apE    = parseFlexDate(r[COL_APPT_EXEC]);
+    const uc     = parseFlexDate(r[COL_UC]);
+    const push   = parseFlexDate(r[COL_PUSHED]);
+    const assn   = parseFlexDate(r[COL_ASSIGNED]);
+    const isoDate = (d: Date | null) => d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : '';
+    cccDeals.push({
+      address: (r[COL_ADDRESS] || "").trim(),
+      city: (r[COL_CITY] || "").trim(),
+      zip: (r[COL_ZIP] || "").trim(),
+      bed: parseInt2(r[COL_BED]),
+      bath: parseFloat2(r[COL_BATH]),
+      sqft: parseInt2(r[COL_SQFT]),
+      yearBuilt: parseInt2(r[COL_YEAR_BUILT]),
+      leadSource: (r[COL_LEAD_SRC] || "").trim(),
+      dealType: (r[COL_DEAL_TYPE] || "").trim(),
+      leadManager: (r[COL_LEAD_MGR] || "").trim(),
+      aqAgent: (r[COL_AQ] || "").trim(),
+      dispoManager: (r[COL_DISPO] || "").trim(),
+      tc: (r[COL_TC] || "").trim(),
+      purchasePrice: parseMoney(r[COL_PRICE]),
+      salePrice: parseMoney(r[COL_SALE]) || parseMoney(r[COL_ASSIGN_PX]) || parseMoney(r[COL_PUSH_PX]),
+      profit: parseMoney(r[COL_PROFIT]),
+      closeDate: isoDate(closed),
+      leadCreated: isoDate(leadC),
+      closeDateMs: closed.getTime(),
+      days_lead_to_net:        daysBetween(leadC, netL),
+      days_net_to_apptSet:     daysBetween(netL, apS),
+      days_apptSet_to_apptExec:daysBetween(apS, apE),
+      days_apptExec_to_uc:     daysBetween(apE, uc),
+      days_uc_to_pushed:       daysBetween(uc, push),
+      days_pushed_to_assigned: daysBetween(push, assn),
+      days_assigned_to_closed: daysBetween(assn || push || uc || apE || apS || netL || leadC, closed),
+      days_total:              daysBetween(leadC, closed),
+    });
+  }
+  // Newest-first by close date
+  cccDeals.sort((a, b) => (b.closeDateMs ?? 0) - (a.closeDateMs ?? 0));
+
+  // Average stage durations across deals where the bookends exist (last 12 months & all-time).
+  // Filter outliers: stage durations > 365d are almost always sheet typos (e.g. wrong year).
+  // Total lifecycle is allowed to be longer (cap at 730d / 2 years).
+  function avgKey(deals: CCCDeal[], key: keyof CCCDeal): { avg: number; n: number; median: number } {
+    const cap = key === "days_total" ? 730 : 365;
+    const xs: number[] = [];
+    for (const d of deals) {
+      const v = d[key];
+      if (typeof v === "number" && !isNaN(v) && v >= 0 && v <= cap) xs.push(v);
+    }
+    if (xs.length === 0) return { avg: 0, n: 0, median: 0 };
+    const avg = xs.reduce((s, x) => s + x, 0) / xs.length;
+    const sorted = [...xs].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    return { avg: Math.round(avg * 10) / 10, n: xs.length, median: Math.round(median * 10) / 10 };
+  }
+
+  const oneYearAgoMs = Date.now() - 365 * 24 * 60 * 60 * 1000;
+  const recentDeals = cccDeals.filter(d => (d.closeDateMs ?? 0) >= oneYearAgoMs);
+  const stageKeys: { key: keyof CCCDeal; label: string; from: string; to: string }[] = [
+    { key: "days_lead_to_net",          label: "Lead → Net Lead",        from: "Lead Created",  to: "Net Lead" },
+    { key: "days_net_to_apptSet",       label: "Net Lead → Appt Set",    from: "Net Lead",      to: "Appt Set" },
+    { key: "days_apptSet_to_apptExec",  label: "Appt Set → Appt Exec",   from: "Appt Set",      to: "Appt Executed" },
+    { key: "days_apptExec_to_uc",       label: "Appt Exec → UC",         from: "Appt Executed", to: "UC" },
+    { key: "days_uc_to_pushed",         label: "UC → Pushed",            from: "UC",            to: "Pushed" },
+    { key: "days_pushed_to_assigned",   label: "Pushed → Assigned",      from: "Pushed",        to: "Assigned" },
+    { key: "days_assigned_to_closed",   label: "Assigned → Closed",      from: "Assigned",      to: "Closed" },
+  ];
+  const cccStages = stageKeys.map(sk => {
+    const r = avgKey(recentDeals.length ? recentDeals : cccDeals, sk.key);
+    const all = avgKey(cccDeals, sk.key);
+    return { ...sk, avgDays: r.avg, medianDays: r.median, sampleSize: r.n, allTimeAvg: all.avg, allTimeN: all.n };
+  });
+  const cccTotalRecent = avgKey(recentDeals.length ? recentDeals : cccDeals, "days_total");
+  const cccTotalAll    = avgKey(cccDeals, "days_total");
+  const cashConversionCycle = {
+    stages: cccStages,
+    totalAvgDays: cccTotalRecent.avg,
+    totalMedianDays: cccTotalRecent.median,
+    totalSampleSize: cccTotalRecent.n,
+    allTimeAvgDays: cccTotalAll.avg,
+    allTimeSampleSize: cccTotalAll.n,
+    deals: cccDeals.slice(0, 250), // cap to keep response small (newest 250)
+  };
+  console.log(`[sheets] CCC: ${cccDeals.length} closed deals, ${recentDeals.length} last 12mo, avg lifecycle ${cccTotalRecent.avg}d (median ${cccTotalRecent.median}d)`);
+
   return {
     salesMonthly: { ...salesMonthly, goals, monthlyRevenueGoals, monthlyGrossProfitGoals },
     activeMonths,
@@ -1715,6 +1903,7 @@ export async function fetchAllKpiData() {
     dailyDispo,
     dailyTransactions,
     lastUpdated,
+    cashConversionCycle,
   };
 }
 

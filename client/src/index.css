@@ -445,3 +445,143 @@
   background: hsl(var(--muted-foreground) / 0.2);
   border-radius: 2px;
 }
+
+/* ============================================================
+   Persistent-red pulsing alert
+   Applied to KPI cards/scorecards that have been red for N+ consecutive periods.
+   ============================================================ */
+@keyframes kpiAlertPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 hsl(var(--status-red) / 0.45),
+                0 0 0 0 hsl(var(--status-red) / 0.0);
+    border-color: hsl(var(--status-red) / 0.7);
+  }
+  50% {
+    box-shadow: 0 0 0 6px hsl(var(--status-red) / 0.0),
+                0 0 24px 4px hsl(var(--status-red) / 0.55);
+    border-color: hsl(var(--status-red));
+  }
+}
+.kpi-alert-pulse {
+  animation: kpiAlertPulse 1.6s ease-in-out infinite;
+  border-width: 1.5px !important;
+  position: relative;
+}
+.kpi-alert-pulse::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background-color: hsl(var(--status-red));
+  box-shadow: 0 0 0 0 hsl(var(--status-red) / 0.7);
+  animation: kpiAlertDot 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes kpiAlertDot {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--status-red) / 0.7); }
+  50%      { box-shadow: 0 0 0 6px hsl(var(--status-red) / 0.0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kpi-alert-pulse, .kpi-alert-pulse::after { animation: none; }
+  .kpi-alert-pulse { box-shadow: 0 0 0 1.5px hsl(var(--status-red)); }
+}
+
+/* ============================================================
+   KPI tooltip ("so what" hover note) — Excel-comment style
+   ============================================================ */
+.kpi-tooltip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: help;
+}
+.kpi-tooltip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  font-size: 9px;
+  font-weight: 700;
+  color: hsl(var(--muted-foreground));
+  background: hsl(var(--muted) / 0.5);
+  border: 1px solid hsl(var(--border));
+  line-height: 1;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.kpi-tooltip:hover .kpi-tooltip-icon,
+.kpi-tooltip:focus-visible .kpi-tooltip-icon {
+  background: hsl(var(--primary) / 0.15);
+  color: hsl(var(--primary));
+  border-color: hsl(var(--primary) / 0.4);
+}
+.kpi-tooltip-bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  padding: 10px 12px;
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: 8px;
+  box-shadow: 0 10px 30px -8px rgba(0,0,0,0.35);
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 400;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.15s, transform 0.15s;
+  z-index: 50;
+  white-space: normal;
+}
+.kpi-tooltip:hover .kpi-tooltip-bubble,
+.kpi-tooltip:focus-visible .kpi-tooltip-bubble {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0);
+}
+.kpi-tooltip-bubble strong {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: hsl(var(--primary));
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+.kpi-tooltip-bubble::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: hsl(var(--popover));
+}
+
+/* CCC funnel arrow connectors */
+.ccc-stage-card {
+  position: relative;
+}
+.ccc-stage-card + .ccc-stage-card::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: 50%;
+  width: 8px;
+  height: 2px;
+  background: hsl(var(--border));
+  transform: translateY(-50%);
+}

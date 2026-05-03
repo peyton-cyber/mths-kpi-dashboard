@@ -10,6 +10,8 @@ import {
   ProgressBar,
   StoplightDot,
 } from "@/components/dash";
+import { KpiTooltip, KPI_NOTES, isRedStreak } from "@/components/KpiTooltip";
+import { CashConversionCycleSection } from "@/components/CashConversionCycle";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
 import { useKpi } from "@/components/KpiDataProvider";
 import {
@@ -57,6 +59,7 @@ export default function Overview() {
     salesMonthly, ytd, company, companyWeekly, quarterly,
     avgProfitPerDeal, activeMonths, salesActiveMonths,
     dailyDates, dailySales, transactions, companyRecords,
+    cashConversionCycle,
   } = data;
   const MONTHS = salesActiveMonths;
 
@@ -539,37 +542,50 @@ export default function Overview() {
       {/* KPI summary row */}
       <Section title={periodSectionTitle}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Scorecard
-            label="Contracts Signed"
-            value={periodKpis.contracts}
-            sub={periodKpis.contractsSub}
-            status={
+          {(() => {
+            const contractsStatus =
               effectivePeriod === "year"    ? statusFromTarget(pipe.contracts, salesMonthly.goals.contracts * MONTHS.length) :
               effectivePeriod === "month"   ? statusFromTarget(pipe.contracts, salesMonthly.goals.contracts) :
               effectivePeriod === "quarter" ? statusFromTarget(pipe.contracts, salesMonthly.goals.contracts * 3) :
-              undefined
-            }
-            size="lg"
-          />
-          <Scorecard
-            label="Closed Deals"
-            value={periodKpis.closedDeals}
-            sub={periodKpis.closedDealsSub}
-            size="lg"
-          />
-          <Scorecard
-            label="Avg Profit / Deal"
-            value={periodKpis.profitPerDeal}
-            sub={periodKpis.profitSub}
-            status={statusFromTarget(pipe.profitPerDeal, salesMonthly.goals.profit_per_deal)}
-            size="lg"
-          />
-          <Scorecard
-            label="Marketing Spend"
-            value={periodKpis.marketingSpend}
-            sub={periodKpis.marketingSpendSub}
-            size="lg"
-          />
+              undefined;
+            const profitStatus = statusFromTarget(pipe.profitPerDeal, salesMonthly.goals.profit_per_deal);
+            return (
+              <>
+                <Scorecard
+                  label="Contracts Signed"
+                  value={periodKpis.contracts}
+                  sub={periodKpis.contractsSub}
+                  status={contractsStatus}
+                  tooltip={KPI_NOTES.contracts}
+                  pulse={contractsStatus === "red"}
+                  size="lg"
+                />
+                <Scorecard
+                  label="Closed Deals"
+                  value={periodKpis.closedDeals}
+                  sub={periodKpis.closedDealsSub}
+                  tooltip={KPI_NOTES.closed_deals}
+                  size="lg"
+                />
+                <Scorecard
+                  label="Avg Profit / Deal"
+                  value={periodKpis.profitPerDeal}
+                  sub={periodKpis.profitSub}
+                  status={profitStatus}
+                  tooltip={KPI_NOTES.profit_per_deal}
+                  pulse={profitStatus === "red"}
+                  size="lg"
+                />
+                <Scorecard
+                  label="Marketing Spend"
+                  value={periodKpis.marketingSpend}
+                  sub={periodKpis.marketingSpendSub}
+                  tooltip={KPI_NOTES.marketing_spend}
+                  size="lg"
+                />
+              </>
+            );
+          })()}
         </div>
       </Section>
 
@@ -618,11 +634,20 @@ export default function Overview() {
 
       {/* CCC + Current Pipeline Deals */}
       <div className="grid grid-cols-12 gap-3">
-        <Card className="col-span-12 md:col-span-4" padding="p-5">
+        <Card
+          className={`col-span-12 md:col-span-4 ${cccStatus === "red" ? "kpi-alert-pulse" : ""}`}
+          padding="p-5"
+        >
           <div className="flex items-center justify-between">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
-              Cash Conversion Cycle
-            </div>
+            <KpiTooltip
+              label={
+                <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
+                  Cash Conversion Cycle
+                </span>
+              }
+              note={KPI_NOTES.cash_conversion_cycle}
+              title="Cash Conversion Cycle"
+            />
             <StoplightBadge status={cccStatus} />
           </div>
           <div className="mt-3 flex items-baseline gap-2">
@@ -713,6 +738,9 @@ export default function Overview() {
           </div>
         </Card>
       </div>
+
+      {/* Detailed CCC: 7-stage funnel + per-house table (data from Historic Deal KPIs) */}
+      <CashConversionCycleSection ccc={cashConversionCycle} />
 
       {/* Company Records — all-time bests */}
       {companyRecords && companyRecords.length > 0 && (

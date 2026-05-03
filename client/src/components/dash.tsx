@@ -125,6 +125,8 @@ export function Scorecard({
   size = "md",
   accent,
   className,
+  tooltip,
+  pulse,
 }: {
   label: string;
   value: string | number;
@@ -134,6 +136,10 @@ export function Scorecard({
   size?: "sm" | "md" | "lg" | "xl";
   accent?: boolean;
   className?: string;
+  /** Optional 'so what' note shown on hover next to the label */
+  tooltip?: string;
+  /** When true, applies the persistent-red pulsing alert ring */
+  pulse?: boolean;
 }) {
   const valueClass = {
     sm: "text-xl",
@@ -142,13 +148,22 @@ export function Scorecard({
     xl: "text-5xl",
   }[size];
   return (
-    <Card className={className} padding="p-0">
+    <Card className={cn(className, pulse && "kpi-alert-pulse")} padding="p-0">
       <div className="bb-card-header-sm">
         <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
+          <div className="min-w-0 flex items-center gap-1.5">
             <div className="text-[10px] uppercase tracking-[0.12em] font-semibold" style={{ color: "hsl(var(--baby-blue-700))" }}>
               {label}
             </div>
+            {tooltip && (
+              <span className="kpi-tooltip" tabIndex={0} aria-label="What this KPI means">
+                <span className="kpi-tooltip-icon" aria-hidden>i</span>
+                <span role="tooltip" className="kpi-tooltip-bubble">
+                  <strong>{label}</strong>
+                  {tooltip}
+                </span>
+              </span>
+            )}
           </div>
           {status && <StoplightDot status={status} />}
         </div>

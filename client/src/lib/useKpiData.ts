@@ -240,6 +240,58 @@ export interface KpiData {
     dana: { files_touched: number[]; closings: number[] };
   };
   lastUpdated: string;
+  cashConversionCycle: CashConversionCycle;
+}
+
+export interface CCCStage {
+  key: string;
+  label: string;
+  from: string;
+  to: string;
+  avgDays: number;
+  medianDays: number;
+  sampleSize: number;
+  allTimeAvg: number;
+  allTimeN: number;
+}
+
+export interface CCCDeal {
+  address: string;
+  city: string;
+  zip: string;
+  bed: number;
+  bath: number;
+  sqft: number;
+  yearBuilt: number;
+  leadSource: string;
+  dealType: string;
+  leadManager: string;
+  aqAgent: string;
+  dispoManager: string;
+  tc: string;
+  purchasePrice: number;
+  salePrice: number;
+  profit: number;
+  closeDate: string;
+  leadCreated: string;
+  days_lead_to_net: number | null;
+  days_net_to_apptSet: number | null;
+  days_apptSet_to_apptExec: number | null;
+  days_apptExec_to_uc: number | null;
+  days_uc_to_pushed: number | null;
+  days_pushed_to_assigned: number | null;
+  days_assigned_to_closed: number | null;
+  days_total: number | null;
+}
+
+export interface CashConversionCycle {
+  stages: CCCStage[];
+  totalAvgDays: number;
+  totalMedianDays: number;
+  totalSampleSize: number;
+  allTimeAvgDays: number;
+  allTimeSampleSize: number;
+  deals: CCCDeal[];
 }
 
 interface QuarterData {
