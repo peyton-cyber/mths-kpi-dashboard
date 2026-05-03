@@ -120,6 +120,30 @@ async function fetchSingleSheet(
 }
 
 /**
+ * Fetch a sheet/tab and return raw 2D values (no header parsing).
+ * Useful for sheets like RISE that have non-standard merged-header layouts.
+ */
+export async function fetchSheetRaw(
+  spreadsheetId: string,
+  sheetName: string
+): Promise<string[][]> {
+  const client = getClient();
+  const range = `'${sheetName.replace(/'/g, "''")}'`;
+  try {
+    const resp = await client.spreadsheets.values.get({
+      spreadsheetId,
+      range,
+      valueRenderOption: "FORMATTED_VALUE",
+      dateTimeRenderOption: "FORMATTED_STRING",
+    });
+    return (resp.data.values as string[][] | undefined) || [];
+  } catch (err: any) {
+    console.error(`[google-sheets] fetchSheetRaw ${sheetName} failed: ${err.message?.slice(0,200)}`);
+    return [];
+  }
+}
+
+/**
  * Validate response has expected shape — same logic the old worker used.
  * Empty sheets count as a "soft fail" so we retry; truly empty tabs are rare.
  */

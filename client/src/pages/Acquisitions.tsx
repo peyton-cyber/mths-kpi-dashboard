@@ -10,6 +10,7 @@ import {
 } from "@/components/dash";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
 import { useKpi } from "@/components/KpiDataProvider";
+import { AlertBanner } from "@/components/AlertBanner";
 import {
   fmtPct,
   fmtMoney,
@@ -262,6 +263,8 @@ export default function Acquisitions() {
           </div>
         </div>
       </PageHeader>
+
+      <AlertBanner filterPersons={["Korbin", "TJ", "Ryan", "Brandon", "Jeff", "Jonathan"]} />
 
       {isFallback && (
         <div className="rounded-lg border border-status-yellow/40 bg-status-yellow/5 px-4 py-2.5 text-[13px] text-muted-foreground">

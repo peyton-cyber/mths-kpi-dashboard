@@ -241,6 +241,68 @@ export interface KpiData {
   };
   lastUpdated: string;
   cashConversionCycle: CashConversionCycle;
+  acquisitionsActivity: AcquisitionsActivity;
+  marketingSpendDetail: MarketingSpendDetail;
+  kpiOwnership: KpiOwnership;
+  alerts?: { redStreaks: RedStreakAlert[] };
+}
+
+export interface RedStreakAlert {
+  person: string;
+  metric: string;
+  target: string;
+  streak: number;
+  weeksRed: string[];
+  latestActual: string;
+  severity: "day3" | "week3";
+}
+
+export interface AcqAgent {
+  agent: string;
+  days: number;
+  driveTime: number;
+  windshieldTime: number;
+  talkTime: number;
+  touchPoints: number;
+  apptsSet: number;
+  apptsAttended: number;
+  offers: number;
+  contracts: number;
+  avgTalkTime: number;
+  avgTouchPoints: number;
+  avgApptsSet: number;
+  target?: { talkTime: number; touchPoints: number; apptsSet: number; };
+}
+export interface AcquisitionsActivity {
+  windowDays: number;
+  agents: AcqAgent[];
+  rowCount: number;
+}
+
+export interface SpendEntry {
+  month: string; agent: string; channel: string;
+  spend: number; leads: number; appts: number;
+  contracts: number; closedDeals: number; profit: number; roas: number;
+}
+export interface SpendRollup {
+  name: string; spend: number; profit: number;
+  leads: number; contracts: number; closedDeals: number; roas: number;
+}
+export interface MarketingSpendDetail {
+  entries: SpendEntry[];
+  byAgent: SpendRollup[];
+  byChannel: SpendRollup[];
+  totalSpend: number;
+  totalProfit: number;
+  overallRoas: number;
+}
+
+export interface KpiOwner {
+  kpi: string; owners: string; team: string;
+  cadence: string; target: string; source: string; notes: string;
+}
+export interface KpiOwnership {
+  map: KpiOwner[];
 }
 
 export interface CCCStage {

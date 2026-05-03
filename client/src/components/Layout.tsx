@@ -17,6 +17,8 @@ import {
   Heart,
   Monitor,
   RefreshCw,
+  TrendingUp,
+  UserCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,10 +33,12 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: "/", label: "Company Overview", short: "Overview", icon: LayoutDashboard },
   { href: "/acquisitions", label: "Acquisitions", short: "AQ", icon: Target, dept: "acquisitions" },
+  { href: "/scorecard", label: "AQ Scorecard", short: "Scorecard", icon: TrendingUp, dept: "acquisitions" },
   { href: "/dispositions", label: "Dispositions", short: "Dispo", icon: HandCoins, dept: "dispositions" },
   { href: "/transactions", label: "Transactions", short: "TC", icon: FileCheck2, dept: "transactions" },
   { href: "/marketing", label: "Marketing", short: "MKT", icon: Megaphone, dept: "marketing" },
   { href: "/leadership", label: "Leadership", short: "L10", icon: Users, dept: "leadership" },
+  { href: "/employees", label: "Employees", short: "People", icon: UserCircle2 },
 ];
 
 function useClock() {

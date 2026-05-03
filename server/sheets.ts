@@ -9,6 +9,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { fetchAllSprintsThisYear, type SprintGoals } from "./asana-sprints";
 import {
   fetchSheetsParallel as fetchSheetsParallelImpl,
+  fetchSheetRaw,
   type SheetResponse as ClientSheetResponse,
 } from "./google-sheets-client";
 
@@ -17,6 +18,10 @@ const MASTER_KPIS = "1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0";
 const TC_TRACKER = "1JreJiwg17RYzFuApf8ypMSCK44EgrJKBAU6XgBFBseQ";
 const COMPANY_FINANCIALS = "1Ja5mBIMGL25jLDkrAUaqcnXhD3K-lJulOAK23b2zlHw";
 const SALES_STOPLIGHT = "1cQ5JggRwpuKeZsCHEpso-ckfj-fM_7Qer50WkYUqxWM";
+// Phase 2 — new operational sheets (created May 2026, owned by Peyton)
+const ACQ_ACTIVITY = process.env.ACQ_ACTIVITY_SHEET_ID || "1olzDTnjBqZsBfxuvIIscAathd1d_MccSLZVoILlIP5k";
+const MARKETING_SPEND = process.env.MARKETING_SPEND_SHEET_ID || "15PkMjnBh68uKssCv9XjylXjUo9c8BoZ-kIx05piHpSk";
+const KPI_OWNERSHIP = process.env.KPI_OWNERSHIP_SHEET_ID || "1IvMom_d9O9mUhGLr1_Ufqkb2GDeDtGNsKxlxT1sRXSo";
 
 interface SheetRow { [key: string]: string; _rowNumber: string; }
 interface SheetResponse { headers: string[]; rows: SheetRow[]; rowCount: number; }
@@ -237,6 +242,10 @@ export async function fetchAllKpiData() {
       { label: "riseCurrent", spreadsheetId: SALES_STOPLIGHT, sheetName: currentRiseTab },
       { label: "risePrev",    spreadsheetId: SALES_STOPLIGHT, sheetName: prevRiseTab },
       { label: "historic", spreadsheetId: MASTER_KPIS, sheetName: "Historic Deal KPIs" },
+      { label: "acqActivity",    spreadsheetId: ACQ_ACTIVITY,    sheetName: "Daily Activity" },
+      { label: "acqTargets",     spreadsheetId: ACQ_ACTIVITY,    sheetName: "Targets" },
+      { label: "marketingSpend", spreadsheetId: MARKETING_SPEND, sheetName: "Monthly Spend by Agent" },
+      { label: "kpiOwners",      spreadsheetId: KPI_OWNERSHIP,   sheetName: "KPI Owners" },
     ]),
     fetchAllSprintsThisYear(_now).catch((e) => {
       console.error(`[asana] sprint fetch failed: ${(e?.message || "").slice(0, 200)}`);
@@ -1874,6 +1883,308 @@ export async function fetchAllKpiData() {
     allTimeSampleSize: cccTotalAll.n,
     deals: cccDeals.slice(0, 250), // cap to keep response small (newest 250)
   };
+
+  // ================================================================
+  // PHASE 2 — Acquisitions Activity, Marketing Spend, KPI Ownership
+  // ================================================================
+  const numOr0 = (v: any) => {
+    const n = parseFloat(String(v ?? "").replace(/[$,\s]/g, ""));
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  // ---------- Acquisitions Activity (per-agent daily) ----------
+  const acqActivityRows = sheets.acqActivity?.rows || [];
+  const acqTargetRows = sheets.acqTargets?.rows || [];
+  const acqTargetByAgent: Record<string, { talkTime: number; touchPoints: number; apptsSet: number; }> = {};
+  for (const r of acqTargetRows) {
+    const agent = String(r["Agent"] || "").trim();
+    if (!agent) continue;
+    acqTargetByAgent[agent] = {
+      talkTime:    numOr0(r["Daily Talk Time (min)"]),
+      touchPoints: numOr0(r["Daily Touch Points"]),
+      apptsSet:    numOr0(r["Daily Appts Set"]),
+    };
+  }
+
+  type AcqAgent = {
+    agent: string;
+    days: number;
+    driveTime: number;
+    windshieldTime: number;
+    talkTime: number;
+    touchPoints: number;
+    apptsSet: number;
+    apptsAttended: number;
+    offers: number;
+    contracts: number;
+    avgTalkTime: number;
+    avgTouchPoints: number;
+    avgApptsSet: number;
+    target?: { talkTime: number; touchPoints: number; apptsSet: number; };
+  };
+  const byAgent: Record<string, AcqAgent> = {};
+  // Last 90 days window
+  const ninetyAgo = new Date(_now.getTime() - 90 * 24 * 60 * 60 * 1000);
+  for (const r of acqActivityRows) {
+    const agent = String(r["Agent"] || "").trim();
+    if (!agent) continue;
+    const dt = parseFlexDate(String(r["Date"] || ""));
+    if (!dt || dt < ninetyAgo || dt > _now) continue;
+    if (!byAgent[agent]) {
+      byAgent[agent] = {
+        agent, days: 0,
+        driveTime: 0, windshieldTime: 0, talkTime: 0, touchPoints: 0,
+        apptsSet: 0, apptsAttended: 0, offers: 0, contracts: 0,
+        avgTalkTime: 0, avgTouchPoints: 0, avgApptsSet: 0,
+        target: acqTargetByAgent[agent],
+      };
+    }
+    const a = byAgent[agent];
+    a.days += 1;
+    a.driveTime      += numOr0(r["Drive Time (min)"]);
+    a.windshieldTime += numOr0(r["Windshield Time (min)"]);
+    a.talkTime       += numOr0(r["Talk Time (min)"]);
+    a.touchPoints    += numOr0(r["Touch Points"]);
+    a.apptsSet       += numOr0(r["Appts Set"]);
+    a.apptsAttended  += numOr0(r["Appts Attended"]);
+    a.offers         += numOr0(r["Offers Made"]);
+    a.contracts      += numOr0(r["Contracts Signed"]);
+  }
+  for (const a of Object.values(byAgent)) {
+    if (a.days > 0) {
+      a.avgTalkTime    = Math.round(a.talkTime / a.days);
+      a.avgTouchPoints = Math.round(a.touchPoints / a.days);
+      a.avgApptsSet    = Math.round((a.apptsSet / a.days) * 10) / 10;
+    }
+  }
+  const acquisitionsActivity = {
+    windowDays: 90,
+    agents: Object.values(byAgent).sort((x, y) => y.contracts - x.contracts || y.apptsSet - x.apptsSet),
+    rowCount: acqActivityRows.length,
+  };
+
+  // ---------- Marketing Spend & ROAS (per-agent monthly) ----------
+  const spendRows = sheets.marketingSpend?.rows || [];
+  type SpendEntry = {
+    month: string; agent: string; channel: string;
+    spend: number; leads: number; appts: number;
+    contracts: number; closedDeals: number; profit: number;
+    roas: number;
+  };
+  const spendEntries: SpendEntry[] = [];
+  for (const r of spendRows) {
+    const month = String(r["Month"] || "").trim();
+    if (!month) continue;
+    const spend = numOr0(r["Spend ($)"]);
+    const profit = numOr0(r["Profit ($)"]);
+    spendEntries.push({
+      month,
+      agent:       String(r["Agent"] || "").trim(),
+      channel:     String(r["Channel"] || "").trim(),
+      spend, profit,
+      leads:       numOr0(r["Leads Attributed"]),
+      appts:       numOr0(r["Appts Set"]),
+      contracts:   numOr0(r["Contracts"]),
+      closedDeals: numOr0(r["Closed Deals"]),
+      roas: spend > 0 ? Math.round((profit / spend) * 100) / 100 : 0,
+    });
+  }
+  // Roll up per agent (across all months in the file) and per channel
+  function rollupBy<K extends string>(key: K): Array<{ name: string; spend: number; profit: number; leads: number; contracts: number; closedDeals: number; roas: number }> {
+    const m: Record<string, { spend: number; profit: number; leads: number; contracts: number; closedDeals: number }> = {};
+    for (const e of spendEntries) {
+      const name = (e as any)[key] as string;
+      if (!name) continue;
+      if (!m[name]) m[name] = { spend: 0, profit: 0, leads: 0, contracts: 0, closedDeals: 0 };
+      m[name].spend       += e.spend;
+      m[name].profit      += e.profit;
+      m[name].leads       += e.leads;
+      m[name].contracts   += e.contracts;
+      m[name].closedDeals += e.closedDeals;
+    }
+    return Object.entries(m).map(([name, v]) => ({
+      name, ...v,
+      roas: v.spend > 0 ? Math.round((v.profit / v.spend) * 100) / 100 : 0,
+    })).sort((a, b) => b.profit - a.profit);
+  }
+  const totalSpend = spendEntries.reduce((s, e) => s + e.spend, 0);
+  const totalSpendProfit = spendEntries.reduce((s, e) => s + e.profit, 0);
+  const marketingSpendDetail = {
+    entries: spendEntries,
+    byAgent:   rollupBy("agent"),
+    byChannel: rollupBy("channel"),
+    totalSpend,
+    totalProfit: totalSpendProfit,
+    overallRoas: totalSpend > 0 ? Math.round((totalSpendProfit / totalSpend) * 100) / 100 : 0,
+  };
+
+  // ---------- KPI Ownership Map ----------
+  const ownerRows = sheets.kpiOwners?.rows || [];
+  const kpiOwnership = {
+    map: ownerRows.map(r => ({
+      kpi:     String(r["KPI"] || "").trim(),
+      owners:  String(r["Owner(s)"] || "").trim(),
+      team:    String(r["Team"] || "").trim(),
+      cadence: String(r["Cadence"] || "").trim(),
+      target:  String(r["Target"] || "").trim(),
+      source:  String(r["Source"] || "").trim(),
+      notes:   String(r["Notes"] || "").trim(),
+    })).filter(o => o.kpi),
+  };
+
+  // ---------- Red-Streak Detection (Weekly RISE) ----------
+  // Walks the raw RISE sheet and detects metrics with 3+ consecutive red weeks.
+  // Layout: row 8 has weekly date headers, row 11 has short labels (Apr.6, Apr.13...),
+  // rows 12+ are per-person metric rows where col A=owner, B=metric, C=target,
+  // D..N = weekly actuals.
+  let redStreaks: Array<{
+    person: string;
+    metric: string;
+    target: string;
+    streak: number;
+    weeksRed: string[];
+    latestActual: string;
+    severity: "day3" | "week3";
+  }> = [];
+  try {
+    const rawRise = await fetchSheetRaw(SALES_STOPLIGHT, currentRiseTab);
+    if (rawRise.length >= 12) {
+      const weekDates = rawRise[10] || []; // row index 10 = "Apr. 6", "Apr. 13"...
+      const lowerIsBetterMetrics = [
+        "appointments cancelled",
+        "matterports missed",
+        "leads contacted after 3 minutes",
+      ];
+
+      const today = new Date();
+      const todayMs = today.getTime();
+
+      // Build week-date → column index map, only for past/current weeks
+      const validCols: number[] = [];
+      for (let c = 3; c < weekDates.length; c++) {
+        const lbl = String(weekDates[c] || "").trim();
+        if (!lbl) continue;
+        // Parse "Apr. 6" / "May. 4" assuming current year
+        const m = lbl.match(/^([A-Za-z]+)\.?\s*(\d+)/);
+        if (!m) continue;
+        const monIdx = ["jan","feb","mar","apr","may","jun","jul","aug","sep","oct","nov","dec"].indexOf(m[1].slice(0,3).toLowerCase());
+        if (monIdx < 0) continue;
+        const day = parseInt2(m[2]);
+        const candidate = new Date(today.getFullYear(), monIdx, day);
+        // Only include weeks that have ended (week-end is ~6 days after the label)
+        if (candidate.getTime() <= todayMs + 24*3600*1000) {
+          validCols.push(c);
+        }
+      }
+
+      function isRed(actual: string, targetRaw: string, lower: boolean): boolean {
+        if (!actual || actual.trim() === "") return false;
+        const aNum = parseFloat(String(actual).replace(/[$,%\s]/g, ""));
+        const tNum = parseFloat(String(targetRaw).replace(/[$,%\s]/g, ""));
+        if (isNaN(aNum) || isNaN(tNum) || tNum === 0) return false;
+        return lower ? (aNum > tNum) : (aNum < tNum);
+      }
+
+      for (let r = 11; r < rawRise.length; r++) {
+        const row = rawRise[r] || [];
+        const owner  = String(row[0] || "").trim();
+        const metric = String(row[1] || "").trim();
+        const target = String(row[2] || "").trim();
+        if (!owner || !metric) continue;
+        if (owner.toLowerCase() === "owner") continue;
+        const lower = lowerIsBetterMetrics.some(k => metric.toLowerCase().includes(k));
+
+        // Walk weeks left→right, counting longest trailing red streak
+        let streak = 0;
+        let weeksRed: string[] = [];
+        let latestActual = "";
+        for (const c of validCols) {
+          const actual = String(row[c] || "").trim();
+          if (!actual) { streak = 0; weeksRed = []; continue; }
+          latestActual = actual;
+          if (isRed(actual, target, lower)) {
+            streak += 1;
+            weeksRed.push(String(weekDates[c] || "").trim());
+          } else {
+            streak = 0;
+            weeksRed = [];
+          }
+        }
+        if (streak >= 3) {
+          redStreaks.push({
+            person: owner,
+            metric,
+            target,
+            streak,
+            weeksRed,
+            latestActual,
+            severity: "week3",
+          });
+        }
+      }
+    }
+  } catch (e: any) {
+    console.error(`[sheets] Red-streak detection failed: ${e.message?.slice(0, 150)}`);
+  }
+  console.log(`[sheets] Red streaks (3+ consecutive weeks): ${redStreaks.length}`);
+
+  // ---------- Day-3 Red detection on Acquisitions Activity ----------
+  // Walks last N days per agent. If 3+ consecutive most-recent days fail target,
+  // emit a day3 alert.
+  try {
+    const targetsByAgent: Record<string, { talkTime: number; touchPoints: number; apptsSet: number }> = {};
+    for (const t of (sheets.acqTargets?.rows || [])) {
+      const a = String(t["Agent"] || "").trim();
+      if (!a) continue;
+      targetsByAgent[a] = {
+        talkTime: parseFloat(String(t["Daily Talk Time (min)"] || "0")) || 0,
+        touchPoints: parseFloat(String(t["Daily Touch Points"] || "0")) || 0,
+        apptsSet: parseFloat(String(t["Daily Appts Set"] || "0")) || 0,
+      };
+    }
+    const agentDays: Record<string, Array<{ date: Date; talk: number; tp: number; appts: number }>> = {};
+    for (const r of (sheets.acqActivity?.rows || [])) {
+      const dt = parseFlexDate(String(r["Date"] || ""));
+      const ag = String(r["Agent"] || "").trim();
+      if (!dt || !ag) continue;
+      if (!agentDays[ag]) agentDays[ag] = [];
+      agentDays[ag].push({
+        date: dt,
+        talk: parseFloat(String(r["Talk Time (min)"] || "0")) || 0,
+        tp: parseFloat(String(r["Touch Points"] || "0")) || 0,
+        appts: parseFloat(String(r["Appts Set"] || "0")) || 0,
+      });
+    }
+    for (const [agent, days] of Object.entries(agentDays)) {
+      const tg = targetsByAgent[agent] || { talkTime: 120, touchPoints: 70, apptsSet: 2 };
+      days.sort((a, b) => b.date.getTime() - a.date.getTime()); // most recent first
+      const recent3 = days.slice(0, 3);
+      if (recent3.length < 3) continue;
+      // Day-3 red if all of last 3 days under target on ANY of the 3 process metrics
+      const checks: { metric: string; redCount: number; latest: number; target: number }[] = [
+        { metric: "Talk Time (min)",  redCount: recent3.filter(d => d.talk  < tg.talkTime).length,    latest: recent3[0].talk,  target: tg.talkTime },
+        { metric: "Touch Points",     redCount: recent3.filter(d => d.tp    < tg.touchPoints).length, latest: recent3[0].tp,    target: tg.touchPoints },
+        { metric: "Appts Set",        redCount: recent3.filter(d => d.appts < tg.apptsSet).length,    latest: recent3[0].appts, target: tg.apptsSet },
+      ];
+      for (const c of checks) {
+        if (c.redCount >= 3) {
+          redStreaks.push({
+            person: agent,
+            metric: c.metric,
+            target: String(c.target),
+            streak: 3,
+            weeksRed: recent3.map(d => d.date.toISOString().slice(0, 10)),
+            latestActual: String(c.latest),
+            severity: "day3",
+          });
+        }
+      }
+    }
+  } catch (e: any) {
+    console.error(`[sheets] Day-3 red detection failed: ${e.message?.slice(0, 150)}`);
+  }
+  console.log(`[sheets] Total alerts (day3 + week3): ${redStreaks.length}`);
+
   console.log(`[sheets] CCC: ${cccDeals.length} closed deals, ${recentDeals.length} last 12mo, avg lifecycle ${cccTotalRecent.avg}d (median ${cccTotalRecent.median}d)`);
 
   return {
@@ -1904,6 +2215,10 @@ export async function fetchAllKpiData() {
     dailyTransactions,
     lastUpdated,
     cashConversionCycle,
+    acquisitionsActivity,
+    marketingSpendDetail,
+    kpiOwnership,
+    alerts: { redStreaks },
   };
 }
 

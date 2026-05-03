@@ -4,6 +4,15 @@ import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { getKpiData, invalidateCache, waitForBackgroundFetch } from "./sheets";
 import {
+  alertKey,
+  ackAlert,
+  listAcks,
+  getAck,
+  recordEscalation,
+  recentEscalation,
+} from "./acks";
+import { sendEmail, composeRedStreakEmail, ESCALATION_RECIPIENTS } from "./email";
+import {
   isAllowedDomain,
   verifyAccessCode,
   getAccessCode,
@@ -327,6 +336,108 @@ export async function registerRoutes(
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
   });
+
+  // ─── Alerts + Ack workflow ──────────────────────────────────────────
+
+  // List active red-streak alerts with ack status merged in.
+  app.get("/api/alerts", requireAuth, (_req, res) => {
+    const data = getKpiData();
+    const streaks = (data?.alerts?.redStreaks || []) as any[];
+    const enriched = streaks.map(s => {
+      const k = alertKey(s.person, s.metric, s.severity);
+      const ack = getAck(k);
+      return { ...s, alertKey: k, acknowledged: !!ack, ack };
+    });
+    res.json({
+      alerts: enriched,
+      total: enriched.length,
+      unacknowledged: enriched.filter(a => !a.acknowledged).length,
+      acks: listAcks(),
+    });
+  });
+
+  // Acknowledge an alert.
+  app.post("/api/alerts/ack", requireAuth, (req, res) => {
+    try {
+      const user = (req as any).user;
+      const { person, metric, severity, streak, note } = req.body || {};
+      if (!person || !metric || !severity) {
+        res.status(400).json({ error: "person, metric, severity required" });
+        return;
+      }
+      const k = alertKey(String(person), String(metric), String(severity));
+      const ack = ackAlert({
+        alertKey: k,
+        person: String(person),
+        metric: String(metric),
+        severity: String(severity),
+        streak: Number(streak) || 0,
+        acknowledgedBy: user?.name || user?.email || "unknown",
+        acknowledgedByEmail: user?.email || "unknown",
+        note: note ? String(note).slice(0, 500) : undefined,
+      });
+      res.json({ ok: true, ack });
+    } catch (err: any) {
+      console.error(`[alerts/ack] error: ${err.message?.slice(0, 200)}`);
+      res.status(500).json({ error: "Failed to acknowledge" });
+    }
+  });
+
+  // Manual escalation trigger (admin only). Walks active alerts, sends emails
+  // for any unacknowledged ones that haven't been escalated in the last 24h.
+  app.post("/api/alerts/escalate", requireAuth, requireAdmin, async (_req, res) => {
+    try {
+      const data = getKpiData();
+      const streaks = (data?.alerts?.redStreaks || []) as any[];
+      const sent: any[] = [];
+      const skipped: any[] = [];
+      for (const s of streaks) {
+        const k = alertKey(s.person, s.metric, s.severity);
+        if (getAck(k)) { skipped.push({ alertKey: k, reason: "acknowledged" }); continue; }
+        if (recentEscalation(k, 24)) { skipped.push({ alertKey: k, reason: "already escalated <24h" }); continue; }
+        const { subject, html } = composeRedStreakEmail(s);
+        const result = await sendEmail({ to: ESCALATION_RECIPIENTS, subject, html });
+        if (result.ok) {
+          recordEscalation(k, ESCALATION_RECIPIENTS.join(","), subject);
+          sent.push({ alertKey: k, subject, id: result.id });
+        } else {
+          skipped.push({ alertKey: k, reason: result.error || "send failed", configIssue: result.skipped });
+        }
+      }
+      res.json({ sent, skipped, total: streaks.length });
+    } catch (err: any) {
+      console.error(`[alerts/escalate] error: ${err.message?.slice(0, 200)}`);
+      res.status(500).json({ error: "Failed to escalate" });
+    }
+  });
+
+  // Background escalation tick — runs every hour.
+  // Only sends emails for unacknowledged alerts not escalated in last 24h.
+  async function escalationTick() {
+    try {
+      const data = getKpiData();
+      if (!data) return;
+      const streaks = (data.alerts?.redStreaks || []) as any[];
+      let sentCount = 0;
+      for (const s of streaks) {
+        const k = alertKey(s.person, s.metric, s.severity);
+        if (getAck(k)) continue;
+        if (recentEscalation(k, 24)) continue;
+        const { subject, html } = composeRedStreakEmail(s);
+        const result = await sendEmail({ to: ESCALATION_RECIPIENTS, subject, html });
+        if (result.ok) {
+          recordEscalation(k, ESCALATION_RECIPIENTS.join(","), subject);
+          sentCount++;
+        }
+      }
+      if (sentCount > 0) console.log(`[escalation] auto-sent ${sentCount} alert email(s)`);
+    } catch (err: any) {
+      console.error(`[escalation] tick failed: ${err.message?.slice(0, 200)}`);
+    }
+  }
+  // Run every hour. First run after 60s so the cache is warm.
+  setTimeout(escalationTick, 60_000);
+  setInterval(escalationTick, 60 * 60 * 1000);
 
   return httpServer;
 }

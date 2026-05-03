@@ -17,6 +17,8 @@ import Dispositions from "@/pages/Dispositions";
 import Transactions from "@/pages/Transactions";
 import Marketing from "@/pages/Marketing";
 import Leadership from "@/pages/Leadership";
+import AcqScorecard from "@/pages/AcqScorecard";
+import Employees from "@/pages/Employees";
 import TvMode from "@/pages/TvMode";
 
 /** Map route paths to the department(s) that can see them */
@@ -27,6 +29,8 @@ const ROUTE_DEPARTMENTS: Record<string, string[]> = {
   "/transactions": ["transactions"],
   "/marketing": ["marketing"],
   "/leadership": ["leadership"],
+  "/scorecard": ["acquisitions"],
+  "/employees": [],
   "/admin": [], // guarded separately by isAdmin
 };
 
@@ -109,6 +113,11 @@ function AppRouter() {
       <Route path="/leadership">
         <DeptRoute path="/leadership" component={Leadership} />
       </Route>
+      <Route path="/scorecard">
+        <DeptRoute path="/scorecard" component={AcqScorecard} />
+      </Route>
+      <Route path="/employees/:slug" component={Employees} />
+      <Route path="/employees" component={Employees} />
       <Route path="/admin">
         <AdminRoute />
       </Route>
