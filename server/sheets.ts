@@ -495,8 +495,24 @@ export async function fetchAllKpiData() {
   const projectedDeals: { deal: string; gross: number; section: string }[] = [];
   const perPersonRevenue: Record<string, Record<string, number>> = {};
   const perPersonCommissions: Record<string, Record<string, number>> = {};
+  // Per-agent gross revenue (sum of deal gross when that agent has a non-zero commission)
+  const perAgentGrossByMonth: Record<string, Record<string, number>> = {};
+  // Per-agent deal count by month
+  const perAgentDealCountByMonth: Record<string, Record<string, number>> = {};
+  // Marketing source totals: { "FB Ads" → { gross, dealCount, perAgent: { Korbin: gross, ... } } }
+  const marketingSourceRollup: Record<string, { gross: number; dealCount: number; perAgent: Record<string, number> }> = {};
   const personCols = ["Korbin ", "Brandon ", "Jeff Henry", "TJ", "Ryan Craig",
     "Jonathan Medlin", "Jeff Davidson", "Joseph Hooper", "Jeb Burchett", "Kalyn", "Dana"];
+
+  /** Extract marketing source from "UC in Jan - FB Ads" → "FB Ads". */
+  function parseMarketingSource(raw: string): string {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    // Pattern: "UC in <month> - <source>"
+    const m = s.match(/-\s*(.+?)\s*$/);
+    if (m) return m[1].trim();
+    return s;
+  }
 
   // Track which section we're in (for logging projected deals)
   let currentSection = "";
@@ -547,12 +563,33 @@ export async function fetchAllKpiData() {
     dealsByMonth[mk].push({ deal, gross, closeDate });
 
     // Per-person revenue/commission attribution (only for actual closed deals)
+    const agentsOnDeal: string[] = [];
     for (const pc of personCols) {
       const val = parseMoney(row[pc]);
       if (val > 0) {
         const name = pc.trim();
         if (!perPersonCommissions[name]) perPersonCommissions[name] = {};
         perPersonCommissions[name][mk] = (perPersonCommissions[name][mk] || 0) + val;
+        agentsOnDeal.push(name);
+        // Per-agent gross & deal count
+        if (!perAgentGrossByMonth[name]) perAgentGrossByMonth[name] = {};
+        perAgentGrossByMonth[name][mk] = (perAgentGrossByMonth[name][mk] || 0) + gross;
+        if (!perAgentDealCountByMonth[name]) perAgentDealCountByMonth[name] = {};
+        perAgentDealCountByMonth[name][mk] = (perAgentDealCountByMonth[name][mk] || 0) + 1;
+      }
+    }
+
+    // Marketing source rollup (column "Marketing Month + Source" or last column)
+    const sourceRaw = row["Marketing Month + Source"] || row[" Marketing Month + Source "] || "";
+    const source = parseMarketingSource(sourceRaw);
+    if (source && gross > 0) {
+      if (!marketingSourceRollup[source]) {
+        marketingSourceRollup[source] = { gross: 0, dealCount: 0, perAgent: {} };
+      }
+      marketingSourceRollup[source].gross += gross;
+      marketingSourceRollup[source].dealCount += 1;
+      for (const a of agentsOnDeal) {
+        marketingSourceRollup[source].perAgent[a] = (marketingSourceRollup[source].perAgent[a] || 0) + gross;
       }
     }
   }
@@ -2219,7 +2256,61 @@ export async function fetchAllKpiData() {
     marketingSpendDetail,
     kpiOwnership,
     alerts: { redStreaks },
+    revTrackerRoas: {
+      perAgentGross: perAgentGrossByMonth,
+      perAgentDealCount: perAgentDealCountByMonth,
+      marketingSourceRollup,
+    },
+    bouncieDriveTime: buildBouncieMock(),
   };
+}
+
+/**
+ * Bouncie drive time mock — last 30 days per agent.
+ * Replaced once real Bouncie API token arrives.
+ * Generates realistic-looking but deterministic data so re-renders are stable.
+ */
+function buildBouncieMock() {
+  const agents = ["Korbin", "TJ", "Ryan", "Brandon", "Jeff Henry", "Jonathan Medlin"];
+  const today = new Date();
+  const days: { date: string; agent: string; driveMinutes: number; miles: number; stops: number }[] = [];
+  // Deterministic pseudo-random based on day-of-year + agent
+  const seed = (s: string, n: number) => {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return Math.abs((h * (n + 1)) % 1000) / 1000;
+  };
+  for (let d = 0; d < 30; d++) {
+    const dt = new Date(today);
+    dt.setDate(dt.getDate() - d);
+    const isoDate = dt.toISOString().slice(0, 10);
+    const dow = dt.getDay();
+    if (dow === 0 || dow === 6) continue; // weekdays only
+    for (const ag of agents) {
+      const r = seed(ag + isoDate, d);
+      const r2 = seed(ag + isoDate + "x", d + 7);
+      const driveMinutes = Math.round(60 + r * 180); // 60-240 min/day
+      const miles = Math.round(20 + r2 * 80); // 20-100 miles/day
+      const stops = Math.round(3 + r * 8); // 3-11 stops/day
+      days.push({ date: isoDate, agent: ag, driveMinutes, miles, stops });
+    }
+  }
+  // Roll up per agent (totals + averages)
+  const byAgent: Record<string, { totalMinutes: number; totalMiles: number; totalStops: number; days: number; avgMinutes: number; avgMiles: number }> = {};
+  for (const row of days) {
+    if (!byAgent[row.agent]) {
+      byAgent[row.agent] = { totalMinutes: 0, totalMiles: 0, totalStops: 0, days: 0, avgMinutes: 0, avgMiles: 0 };
+    }
+    byAgent[row.agent].totalMinutes += row.driveMinutes;
+    byAgent[row.agent].totalMiles += row.miles;
+    byAgent[row.agent].totalStops += row.stops;
+    byAgent[row.agent].days += 1;
+  }
+  for (const k of Object.keys(byAgent)) {
+    byAgent[k].avgMinutes = Math.round(byAgent[k].totalMinutes / byAgent[k].days);
+    byAgent[k].avgMiles = Math.round(byAgent[k].totalMiles / byAgent[k].days);
+  }
+  return { byAgent, daily: days, source: "mock" as const, lastUpdated: new Date().toISOString() };
 }
 
 // ========== RESILIENT CACHE ==========

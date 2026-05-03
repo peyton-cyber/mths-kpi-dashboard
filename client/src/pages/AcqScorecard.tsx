@@ -1,12 +1,7 @@
 /**
- * Acquisitions Scorecard — per-agent activity (drive/windshield/talk/touch),
- * appointment funnel (set→attended→offers→contracts), and ROAS by agent.
- *
- * Data source:
- *  - data.acquisitionsActivity: 90-day window per-agent rollup (driveTime,
- *    windshieldTime, talkTime, touchPoints, apptsSet, apptsAttended, offers,
- *    contracts, plus daily targets)
- *  - data.marketingSpendDetail.byAgent: per-agent spend, profit, ROAS
+ * Acquisitions Scorecard — horizontal matrix view.
+ * Layout: KPIs as rows, agents as columns. Plus Drive Time card (Bouncie mock)
+ * and Rev Tracker ROAS section (per-agent gross & marketing source rollup).
  */
 import { Card, PageHeader, Section } from "@/components/dash";
 import { useKpi } from "@/components/KpiDataProvider";
@@ -20,10 +15,7 @@ import {
 } from "@/lib/chartConfig";
 import { fmtMoney } from "@/lib/useKpiData";
 import { Link } from "wouter";
-
-function pct(n: number, d: number): number {
-  return d > 0 ? Math.round((n / d) * 100) : 0;
-}
+import { Car, Gauge, MapPin } from "lucide-react";
 
 function statusColor(actual: number, target: number, lowerIsBetter = false): string {
   if (target === 0) return "hsl(var(--muted-foreground))";
@@ -38,6 +30,13 @@ function statusColor(actual: number, target: number, lowerIsBetter = false): str
   return "hsl(var(--status-red))";
 }
 
+interface MatrixRow {
+  label: string;
+  sub?: string;
+  values: Record<string, { value: number | string; color?: string; bold?: boolean }>;
+  format?: (v: number) => string;
+}
+
 export default function AcqScorecard() {
   const data = useKpi();
   const acq = data.acquisitionsActivity;
@@ -46,7 +45,6 @@ export default function AcqScorecard() {
   const agents = acq?.agents || [];
   const hasData = agents.length > 0;
 
-  // Merge spend ROAS into agent rows
   const rows = agents.map(a => {
     const spendRow = spendByAgent.find(s => s.name.toLowerCase() === a.agent.toLowerCase());
     return {
@@ -58,10 +56,78 @@ export default function AcqScorecard() {
     };
   });
 
-  // Daily averages (vs daily targets)
   const tgtTalk = rows[0]?.target?.talkTime || 120;
   const tgtTouch = rows[0]?.target?.touchPoints || 70;
   const tgtAppts = rows[0]?.target?.apptsSet || 2;
+
+  // Build matrix: KPI rows × agent columns
+  const agentNames = rows.map(r => r.agent);
+
+  const buildMatrix = (): MatrixRow[] => {
+    const make = (
+      label: string,
+      sub: string | undefined,
+      pick: (r: typeof rows[number]) => { value: number | string; color?: string; bold?: boolean }
+    ): MatrixRow => ({
+      label,
+      sub,
+      values: Object.fromEntries(rows.map(r => [r.agent, pick(r)])),
+    });
+
+    return [
+      make("Talk Time", `avg min/day · target ${tgtTalk}`, r => {
+        const tt = r.target?.talkTime ?? tgtTalk;
+        return { value: r.avgTalkTime, color: statusColor(r.avgTalkTime, tt) };
+      }),
+      make("Touch Points", `avg/day · target ${tgtTouch}`, r => {
+        const tp = r.target?.touchPoints ?? tgtTouch;
+        return { value: r.avgTouchPoints, color: statusColor(r.avgTouchPoints, tp) };
+      }),
+      make("Appts Set", `avg/day · target ${tgtAppts}`, r => {
+        const ta = r.target?.apptsSet ?? tgtAppts;
+        return { value: r.avgApptsSet, color: statusColor(r.avgApptsSet, ta) };
+      }),
+      make("Days Active", "in window", r => ({ value: r.days })),
+      make("Drive Time", "total min", r => ({ value: r.driveTime })),
+      make("Windshield", "total min", r => ({ value: r.windshieldTime })),
+      make("Appts Attended", undefined, r => ({ value: r.apptsAttended })),
+      make("Offers Made", undefined, r => ({ value: r.offers })),
+      make("Contracts", undefined, r => ({ value: r.contracts, bold: true })),
+      make("Marketing Spend", undefined, r => ({ value: r.spend > 0 ? fmtMoney(r.spend) : "—" })),
+      make("ROAS", "profit per $", r => ({
+        value: r.roas > 0 ? `${r.roas.toFixed(2)}x` : "—",
+        color: r.roas >= 3 ? "hsl(var(--status-green))" : r.roas >= 1.5 ? "hsl(var(--status-amber))" : r.roas > 0 ? "hsl(var(--status-red))" : undefined,
+        bold: true,
+      })),
+    ];
+  };
+
+  const matrix = hasData ? buildMatrix() : [];
+
+  // Bouncie drive time
+  const bouncie = data.bouncieDriveTime;
+  const bouncieRows = bouncie ? Object.entries(bouncie.byAgent).map(([name, b]) => ({
+    name, ...b,
+  })).sort((a, b) => b.totalMinutes - a.totalMinutes) : [];
+
+  // Rev Tracker ROAS
+  const revRoas = data.revTrackerRoas;
+  const marketingSourceData = revRoas
+    ? Object.entries(revRoas.marketingSourceRollup)
+        .map(([name, v]) => ({ name, gross: v.gross, deals: v.dealCount }))
+        .sort((a, b) => b.gross - a.gross)
+        .slice(0, 8)
+    : [];
+  const perAgentGross = revRoas
+    ? Object.entries(revRoas.perAgentGross)
+        .map(([name, monthly]) => {
+          const total = Object.values(monthly).reduce((a, b) => a + b, 0);
+          const dealCount = Object.values(revRoas.perAgentDealCount[name] || {}).reduce((a, b) => a + b, 0);
+          return { name, total, dealCount };
+        })
+        .filter(r => r.total > 0)
+        .sort((a, b) => b.total - a.total)
+    : [];
 
   return (
     <div className="space-y-6">
@@ -88,71 +154,90 @@ export default function AcqScorecard() {
 
       {hasData && (
         <>
-          {/* Per-agent table */}
-          <Section title="Per-Agent Activity" subtitle="Daily averages vs target">
+          {/* MATRIX: KPIs as rows, agents as columns */}
+          <Section title="Per-Agent Scorecard" subtitle="KPIs (rows) × Agents (columns)">
             <Card padding="p-0">
               <div className="overflow-x-auto">
                 <table className="w-full text-[12.5px]">
-                  <thead>
+                  <thead className="bg-muted/40">
                     <tr className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground border-b">
-                      <th className="text-left p-3 font-semibold">Agent</th>
-                      <th className="text-right p-3 font-semibold">Days</th>
-                      <th className="text-right p-3 font-semibold">Talk Time<br/><span className="text-[9px] opacity-60">avg min/day · tgt {tgtTalk}</span></th>
-                      <th className="text-right p-3 font-semibold">Touch Points<br/><span className="text-[9px] opacity-60">avg/day · tgt {tgtTouch}</span></th>
-                      <th className="text-right p-3 font-semibold">Appts Set<br/><span className="text-[9px] opacity-60">avg/day · tgt {tgtAppts}</span></th>
-                      <th className="text-right p-3 font-semibold">Drive<br/><span className="text-[9px] opacity-60">total min</span></th>
-                      <th className="text-right p-3 font-semibold">Wndshld<br/><span className="text-[9px] opacity-60">total min</span></th>
-                      <th className="text-right p-3 font-semibold">Appts Atd</th>
-                      <th className="text-right p-3 font-semibold">Offers</th>
-                      <th className="text-right p-3 font-semibold">Contracts</th>
-                      <th className="text-right p-3 font-semibold">Spend</th>
-                      <th className="text-right p-3 font-semibold">ROAS</th>
-                      <th className="text-right p-3 font-semibold">Drill-down</th>
+                      <th className="text-left p-3 font-semibold sticky left-0 bg-muted/60 z-10 min-w-[160px]">KPI</th>
+                      {agentNames.map(name => (
+                        <th key={name} className="text-right p-3 font-semibold min-w-[110px]">
+                          <Link href={`/employees/${encodeURIComponent(name.toLowerCase())}`} className="hover:underline text-foreground">
+                            {name}
+                          </Link>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map(r => {
-                      const tt = r.target?.talkTime ?? tgtTalk;
-                      const tp = r.target?.touchPoints ?? tgtTouch;
-                      const ta = r.target?.apptsSet ?? tgtAppts;
-                      return (
-                        <tr key={r.agent} className="border-b last:border-b-0 hover:bg-accent/30">
-                          <td className="p-3 font-semibold">{r.agent}</td>
-                          <td className="p-3 text-right tabular-nums">{r.days}</td>
-                          <td className="p-3 text-right tabular-nums" style={{ color: statusColor(r.avgTalkTime, tt) }}>
-                            {r.avgTalkTime}
-                          </td>
-                          <td className="p-3 text-right tabular-nums" style={{ color: statusColor(r.avgTouchPoints, tp) }}>
-                            {r.avgTouchPoints}
-                          </td>
-                          <td className="p-3 text-right tabular-nums" style={{ color: statusColor(r.avgApptsSet, ta) }}>
-                            {r.avgApptsSet}
-                          </td>
-                          <td className="p-3 text-right tabular-nums opacity-80">{r.driveTime}</td>
-                          <td className="p-3 text-right tabular-nums opacity-80">{r.windshieldTime}</td>
-                          <td className="p-3 text-right tabular-nums">{r.apptsAttended}</td>
-                          <td className="p-3 text-right tabular-nums">{r.offers}</td>
-                          <td className="p-3 text-right tabular-nums font-semibold">{r.contracts}</td>
-                          <td className="p-3 text-right tabular-nums">{r.spend > 0 ? fmtMoney(r.spend) : "—"}</td>
-                          <td className="p-3 text-right tabular-nums font-semibold">
-                            {r.roas > 0 ? `${r.roas.toFixed(2)}x` : "—"}
-                          </td>
-                          <td className="p-3 text-right">
-                            <Link
-                              href={`/employees/${encodeURIComponent(r.agent.toLowerCase())}`}
-                              className="text-[11px] text-primary hover:underline"
+                    {matrix.map((row, ri) => (
+                      <tr key={row.label} className={`border-b last:border-b-0 ${ri % 2 === 1 ? "bg-muted/10" : ""} hover:bg-accent/20`}>
+                        <td className="p-3 sticky left-0 bg-inherit z-10">
+                          <div className="font-semibold">{row.label}</div>
+                          {row.sub && <div className="text-[10px] text-muted-foreground mt-0.5">{row.sub}</div>}
+                        </td>
+                        {agentNames.map(name => {
+                          const cell = row.values[name];
+                          if (!cell) return <td key={name} className="p-3 text-right text-muted-foreground">—</td>;
+                          return (
+                            <td
+                              key={name}
+                              className={`p-3 text-right tabular-nums ${cell.bold ? "font-bold" : ""}`}
+                              style={cell.color ? { color: cell.color } : undefined}
                             >
-                              Open →
-                            </Link>
-                          </td>
-                        </tr>
-                      );
-                    })}
+                              {cell.value}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
             </Card>
           </Section>
+
+          {/* Drive Time card (Bouncie mock) */}
+          {bouncieRows.length > 0 && (
+            <Section
+              title="Drive Time"
+              subtitle={`Bouncie · last 30 days · ${bouncie?.source === "mock" ? "MOCK DATA (until token arrives)" : "live"}`}
+            >
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {bouncieRows.map(b => (
+                  <Card key={b.name} padding="p-4">
+                    <div className="flex items-center gap-2 mb-2">
+                      <Car className="h-4 w-4 text-primary" />
+                      <div className="font-semibold text-sm">{b.name}</div>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                          <Gauge className="h-3 w-3" /> Min/Day
+                        </div>
+                        <div className="text-lg font-bold tabular-nums">{b.avgMinutes}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground flex items-center gap-1">
+                          <MapPin className="h-3 w-3" /> Mi/Day
+                        </div>
+                        <div className="text-lg font-bold tabular-nums">{b.avgMiles}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Stops</div>
+                        <div className="text-lg font-bold tabular-nums">{b.totalStops}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 pt-2 border-t border-border text-[10px] text-muted-foreground">
+                      Total: {b.totalMinutes} min · {b.totalMiles} mi · {b.days} days
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </Section>
+          )}
 
           {/* Funnel chart */}
           <Section title="Per-Agent Activity Funnel" subtitle="Touch points → appts set → attended → offers → contracts (period totals)">
@@ -175,9 +260,67 @@ export default function AcqScorecard() {
             </Card>
           </Section>
 
-          {/* ROAS by agent */}
+          {/* Rev Tracker ROAS — per agent gross */}
+          {perAgentGross.length > 0 && (
+            <Section
+              title="Revenue Tracker — Per-Agent Gross"
+              subtitle="Sum of deal gross revenue when agent earned a commission (YTD)"
+            >
+              <Card>
+                <div className="h-[280px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={perAgentGross} margin={CHART_MARGIN}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_COLOR} />
+                      <XAxis dataKey="name" {...CHART_AXIS} />
+                      <YAxis {...CHART_AXIS} tickFormatter={(v: number) => fmtMoney(v)} />
+                      <Tooltip
+                        contentStyle={CHART_TOOLTIP_STYLE}
+                        formatter={(v: any, n: any) => n === "Gross" ? fmtMoney(Number(v)) : v}
+                      />
+                      <Legend {...CHART_LEGEND} />
+                      <Bar dataKey="total" name="Gross" fill="hsl(var(--baby-blue-600))" {...BAR_DEFAULTS} />
+                      <Bar dataKey="dealCount" name="Deals" fill="hsl(var(--status-green))" {...BAR_DEFAULTS} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </Card>
+            </Section>
+          )}
+
+          {/* Rev Tracker — Marketing Source Rollup */}
+          {marketingSourceData.length > 0 && (
+            <Section
+              title="Revenue Tracker — Gross by Marketing Source"
+              subtitle="Top sources from Rev Tracker (deals attributed via Marketing Month + Source column)"
+            >
+              <Card>
+                <div className="h-[280px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={marketingSourceData} margin={CHART_MARGIN}>
+                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_COLOR} />
+                      <XAxis dataKey="name" {...CHART_AXIS} />
+                      <YAxis {...CHART_AXIS} tickFormatter={(v: number) => fmtMoney(v)} />
+                      <Tooltip
+                        contentStyle={CHART_TOOLTIP_STYLE}
+                        formatter={(v: any, n: any) => n === "Gross" ? fmtMoney(Number(v)) : v}
+                      />
+                      <Legend {...CHART_LEGEND} />
+                      <Bar dataKey="gross" name="Gross" fill="hsl(var(--baby-blue-600))" {...BAR_DEFAULTS}>
+                        {marketingSourceData.map((_, i) => (
+                          <Cell key={i} fill={`hsl(var(--baby-blue-${[300, 400, 500, 600, 700][i % 5]}))`} />
+                        ))}
+                      </Bar>
+                      <Bar dataKey="deals" name="Deals" fill="hsl(var(--status-green))" {...BAR_DEFAULTS} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </Card>
+            </Section>
+          )}
+
+          {/* ROAS by agent (Marketing Spend tracker) */}
           {rows.some(r => r.spend > 0) && (
-            <Section title="Marketing ROAS by Agent" subtitle="Profit per dollar spent (last reported month)">
+            <Section title="Marketing Spend — ROAS by Agent" subtitle="Profit per dollar spent (last reported month)">
               <Card>
                 <div className="h-[280px]">
                   <ResponsiveContainer width="100%" height="100%">

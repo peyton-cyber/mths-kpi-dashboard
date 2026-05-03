@@ -11,7 +11,7 @@ import {
   recordEscalation,
   recentEscalation,
 } from "./acks";
-import { sendEmail, composeRedStreakEmail, ESCALATION_RECIPIENTS } from "./email";
+import { postSlack, composeRedStreakSlack, SLACK_ALERT_CHANNEL } from "./slack";
 import {
   isAllowedDomain,
   verifyAccessCode,
@@ -395,13 +395,13 @@ export async function registerRoutes(
         const k = alertKey(s.person, s.metric, s.severity);
         if (getAck(k)) { skipped.push({ alertKey: k, reason: "acknowledged" }); continue; }
         if (recentEscalation(k, 24)) { skipped.push({ alertKey: k, reason: "already escalated <24h" }); continue; }
-        const { subject, html } = composeRedStreakEmail(s);
-        const result = await sendEmail({ to: ESCALATION_RECIPIENTS, subject, html });
+        const { text, blocks } = composeRedStreakSlack(s);
+        const result = await postSlack({ text, blocks });
         if (result.ok) {
-          recordEscalation(k, ESCALATION_RECIPIENTS.join(","), subject);
-          sent.push({ alertKey: k, subject, id: result.id });
+          recordEscalation(k, SLACK_ALERT_CHANNEL, text);
+          sent.push({ alertKey: k, channel: SLACK_ALERT_CHANNEL, text });
         } else {
-          skipped.push({ alertKey: k, reason: result.error || "send failed", configIssue: result.skipped });
+          skipped.push({ alertKey: k, reason: result.error || "post failed", configIssue: result.skipped });
         }
       }
       res.json({ sent, skipped, total: streaks.length });
@@ -423,14 +423,14 @@ export async function registerRoutes(
         const k = alertKey(s.person, s.metric, s.severity);
         if (getAck(k)) continue;
         if (recentEscalation(k, 24)) continue;
-        const { subject, html } = composeRedStreakEmail(s);
-        const result = await sendEmail({ to: ESCALATION_RECIPIENTS, subject, html });
+        const { text, blocks } = composeRedStreakSlack(s);
+        const result = await postSlack({ text, blocks });
         if (result.ok) {
-          recordEscalation(k, ESCALATION_RECIPIENTS.join(","), subject);
+          recordEscalation(k, SLACK_ALERT_CHANNEL, text);
           sentCount++;
         }
       }
-      if (sentCount > 0) console.log(`[escalation] auto-sent ${sentCount} alert email(s)`);
+      if (sentCount > 0) console.log(`[escalation] auto-posted ${sentCount} Slack alert(s) to ${SLACK_ALERT_CHANNEL}`);
     } catch (err: any) {
       console.error(`[escalation] tick failed: ${err.message?.slice(0, 200)}`);
     }

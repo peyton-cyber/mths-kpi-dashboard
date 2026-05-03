@@ -245,6 +245,17 @@ export interface KpiData {
   marketingSpendDetail: MarketingSpendDetail;
   kpiOwnership: KpiOwnership;
   alerts?: { redStreaks: RedStreakAlert[] };
+  revTrackerRoas?: {
+    perAgentGross: Record<string, Record<string, number>>;
+    perAgentDealCount: Record<string, Record<string, number>>;
+    marketingSourceRollup: Record<string, { gross: number; dealCount: number; perAgent: Record<string, number> }>;
+  };
+  bouncieDriveTime?: {
+    byAgent: Record<string, { totalMinutes: number; totalMiles: number; totalStops: number; days: number; avgMinutes: number; avgMiles: number }>;
+    daily: { date: string; agent: string; driveMinutes: number; miles: number; stops: number }[];
+    source: "mock" | "live";
+    lastUpdated: string;
+  };
 }
 
 export interface RedStreakAlert {

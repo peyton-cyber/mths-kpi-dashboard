@@ -61,10 +61,23 @@ export default function Employees() {
 }
 
 function EmployeeList() {
+  const data = useKpi();
   const groups: Record<string, Person[]> = {};
   for (const p of ROSTER) {
     if (!groups[p.team]) groups[p.team] = [];
     groups[p.team].push(p);
+  }
+
+  // Pull most recent activity for each AQA agent for the roster card
+  const acqAgents = data.acquisitionsActivity?.agents || [];
+  function quickStats(name: string) {
+    const a = acqAgents.find(x => x.agent.toLowerCase() === name.toLowerCase());
+    if (!a) return null;
+    return {
+      contracts: a.contracts,
+      apptsSet: a.avgApptsSet,
+      target: a.target?.apptsSet ?? 2,
+    };
   }
 
   return (
@@ -75,26 +88,49 @@ function EmployeeList() {
 
       {Object.entries(groups).map(([team, people]) => (
         <Section key={team} title={team} subtitle={`${people.length} ${people.length === 1 ? "person" : "people"}`}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {people.map(p => (
-              <Link key={p.slug} href={`/employees/${p.slug}`}>
-                <Card padding="p-4" className="cursor-pointer hover:bg-accent/40 transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="h-10 w-10 rounded-full flex items-center justify-center text-white font-bold"
-                      style={{ backgroundColor: "hsl(var(--baby-blue-600))" }}
-                    >
-                      {p.name.charAt(0).toUpperCase()}
+          <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
+            {people.map(p => {
+              const stats = quickStats(p.name);
+              const apptColor = stats
+                ? statusColor(stats.apptsSet, stats.target)
+                : "hsl(var(--muted-foreground))";
+              return (
+                <Link key={p.slug} href={`/employees/${p.slug}`}>
+                  <Card
+                    padding="p-3"
+                    className="shrink-0 w-[200px] cursor-pointer hover:bg-accent/40 hover:border-primary/40 transition-all"
+                  >
+                    <div className="flex flex-col items-center text-center">
+                      <div
+                        className="h-14 w-14 rounded-full flex items-center justify-center text-white text-lg font-bold mb-2"
+                        style={{ backgroundColor: "hsl(var(--baby-blue-600))" }}
+                      >
+                        {p.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="font-semibold text-sm truncate w-full">{p.name}</div>
+                      <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{p.role}</div>
+                      {stats && (
+                        <div className="mt-2 pt-2 border-t border-border w-full grid grid-cols-2 gap-1">
+                          <div>
+                            <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Contracts</div>
+                            <div className="text-sm font-bold tabular-nums">{stats.contracts}</div>
+                          </div>
+                          <div>
+                            <div className="text-[9px] uppercase tracking-wider text-muted-foreground">Appts/Day</div>
+                            <div className="text-sm font-bold tabular-nums" style={{ color: apptColor }}>
+                              {stats.apptsSet}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      <div className="mt-2 inline-flex items-center gap-0.5 text-[10px] text-primary font-semibold">
+                        Open <ChevronRight className="h-3 w-3" />
+                      </div>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="font-semibold text-sm truncate">{p.name}</div>
-                      <div className="text-[11px] text-muted-foreground">{p.role}</div>
-                    </div>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </Card>
-              </Link>
-            ))}
+                  </Card>
+                </Link>
+              );
+            })}
           </div>
         </Section>
       ))}
