@@ -19,6 +19,7 @@ import {
   RefreshCw,
   TrendingUp,
   UserCircle2,
+  LifeBuoy,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -163,6 +164,21 @@ export function Layout({ children }: { children: ReactNode }) {
             <Monitor className={cn("h-3.5 w-3.5 shrink-0", location === "/tv" && "text-[hsl(var(--sidebar-primary-foreground))]")} />
             <span>TV Mode</span>
           </Link>
+
+          {/* Report KPI Issue — opens intake form in new tab */}
+          <a
+            href="https://docs.google.com/forms/d/e/1FAIpQLSfu9ot2-_AhCq0PxUxP2ZHXy9b1uiuitdiXRWP2-Y0-oxzghA/viewform"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="link-report-issue"
+            className={cn(
+              "relative flex items-center gap-2.5 rounded-lg px-3 py-2 text-[12.5px] font-medium transition-all",
+              "text-[hsl(var(--sidebar-foreground))]/65 hover:text-[hsl(var(--sidebar-foreground))]",
+            )}
+          >
+            <LifeBuoy className="h-3.5 w-3.5 shrink-0" />
+            <span>Report KPI Issue</span>
+          </a>
 
           {/* Admin link */}
           {user?.isAdmin && (
