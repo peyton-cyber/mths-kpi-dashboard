@@ -3,6 +3,7 @@
  * Layout: KPIs as rows, agents as columns. Plus Drive Time card (Bouncie mock)
  * and Rev Tracker ROAS section (per-agent gross & marketing source rollup).
  */
+import { useState } from "react";
 import { Card, PageHeader, Section } from "@/components/dash";
 import { useKpi } from "@/components/KpiDataProvider";
 import { AlertBanner } from "@/components/AlertBanner";
@@ -44,6 +45,9 @@ export default function AcqScorecard() {
 
   const agents = acq?.agents || [];
   const hasData = agents.length > 0;
+
+  // Agent focus toggle: "all" or specific agent name. Filters the funnel/charts.
+  const [focusAgent, setFocusAgent] = useState<string>("all");
 
   const rows = agents.map(a => {
     const spendRow = spendByAgent.find(s => s.name.toLowerCase() === a.agent.toLowerCase());
@@ -239,12 +243,38 @@ export default function AcqScorecard() {
             </Section>
           )}
 
-          {/* Funnel chart */}
-          <Section title="Per-Agent Activity Funnel" subtitle="Touch points → appts set → attended → offers → contracts (period totals)">
+          {/* Funnel chart with agent focus toggle */}
+          <Section
+            title="Per-Agent Activity Funnel"
+            subtitle="Touch points → appts set → attended → offers → contracts (period totals)"
+            actions={
+              <div className="flex items-center gap-1 flex-wrap">
+                <button
+                  onClick={() => setFocusAgent("all")}
+                  className={`text-[11px] px-2.5 py-1 rounded-md border transition-colors ${
+                    focusAgent === "all"
+                      ? "bg-primary/15 text-primary border-primary/40"
+                      : "text-muted-foreground border-[hsl(var(--card-border))] hover:text-foreground"
+                  }`}
+                >All agents</button>
+                {agentNames.map(name => (
+                  <button
+                    key={name}
+                    onClick={() => setFocusAgent(name)}
+                    className={`text-[11px] px-2.5 py-1 rounded-md border transition-colors ${
+                      focusAgent === name
+                        ? "bg-primary/15 text-primary border-primary/40"
+                        : "text-muted-foreground border-[hsl(var(--card-border))] hover:text-foreground"
+                    }`}
+                  >{name}</button>
+                ))}
+              </div>
+            }
+          >
             <Card>
               <div className="h-[320px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={rows} margin={CHART_MARGIN}>
+                  <BarChart data={focusAgent === "all" ? rows : rows.filter(r => r.agent === focusAgent)} margin={CHART_MARGIN}>
                     <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_COLOR} />
                     <XAxis dataKey="agent" {...CHART_AXIS} />
                     <YAxis {...CHART_AXIS} />
@@ -318,28 +348,7 @@ export default function AcqScorecard() {
             </Section>
           )}
 
-          {/* ROAS by agent (Marketing Spend tracker) */}
-          {rows.some(r => r.spend > 0) && (
-            <Section title="Marketing Spend — ROAS by Agent" subtitle="Profit per dollar spent (last reported month)">
-              <Card>
-                <div className="h-[280px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={rows.filter(r => r.spend > 0)} margin={CHART_MARGIN}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={CHART_GRID_COLOR} />
-                      <XAxis dataKey="agent" {...CHART_AXIS} />
-                      <YAxis {...CHART_AXIS} />
-                      <Tooltip contentStyle={CHART_TOOLTIP_STYLE} formatter={(v: any) => `${Number(v).toFixed(2)}x`} />
-                      <Bar dataKey="roas" name="ROAS" {...BAR_DEFAULTS}>
-                        {rows.filter(r => r.spend > 0).map((r, i) => (
-                          <Cell key={i} fill={r.roas >= 3 ? "hsl(var(--status-green))" : r.roas >= 1.5 ? "hsl(var(--status-amber))" : "hsl(var(--status-red))"} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </Card>
-            </Section>
-          )}
+          {/* ROAS by agent removed per leadership feedback — not high-priority at agent level */}
         </>
       )}
     </div>

@@ -417,6 +417,21 @@ export default function Transactions() {
             status={stuckStatus}
             size="lg"
           />
+          {(() => {
+            const closed = r.contracts_closed.current;
+            const active = r.active_files.current;
+            const pct = active > 0 ? (closed / active) : 0;
+            const closeStatus: "red" | "yellow" | "green" = pct >= 0.15 ? "green" : pct >= 0.08 ? "yellow" : "red";
+            return (
+              <Scorecard
+                label="Weekly Close Rate"
+                value={`${(pct * 100).toFixed(1)}%`}
+                sub={`${closed} closed of ${active} active`}
+                status={closeStatus}
+                size="lg"
+              />
+            );
+          })()}
         </div>
 
         {/* Daily files touched — only shown for day period */}

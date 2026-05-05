@@ -73,6 +73,29 @@ export default function Overview() {
   const cccTarget = companyWeekly.cash_conversion_target;
   const cccStatus = statusFromTarget(ccc, cccTarget, false, 0.05);
 
+  // ── Dropped deals & Follow-Through Rate ─────────────────────────────
+  // Follow-Through Rate = contracts that did NOT drop / total contracts. Target 85%.
+  const droppedMonthly = (salesMonthly as any).dropped_contracts as Record<string, number | null> | undefined;
+  const droppedThisMonth = droppedMonthly?.[latestMonth] ?? 0;
+  const droppedYtd = droppedMonthly
+    ? Object.entries(droppedMonthly)
+        .filter(([k]) => MONTHS.includes(k))
+        .reduce((s, [, v]) => s + (Number(v) || 0), 0)
+    : 0;
+  const contractsThisMonth = salesMonthly.contracts[latestMonth] ?? 0;
+  const contractsYtd = ytd.contracts;
+  const followThroughMonth = contractsThisMonth > 0
+    ? Math.max(0, Math.min(1, (contractsThisMonth - droppedThisMonth) / contractsThisMonth))
+    : 0;
+  const followThroughYtd = contractsYtd > 0
+    ? Math.max(0, Math.min(1, (contractsYtd - droppedYtd) / contractsYtd))
+    : 0;
+  const followThroughTarget = 0.85;
+  const followThroughStatus: "red" | "yellow" | "green" =
+    followThroughYtd >= followThroughTarget ? "green"
+    : followThroughYtd >= followThroughTarget * 0.9 ? "yellow"
+    : "red";
+
   // ── Fallback pattern ─────────────────────────────────────────────────
   const rawPipeline = getPipelineForPeriod(data, period);
   const hasPeriodData =
@@ -211,10 +234,11 @@ export default function Overview() {
   // Pipeline trend chart data
   const trendData = MONTHS.map((m) => ({
     month: m,
-    "Gross Leads": salesMonthly.gross_leads[m] ?? 0,
-    "Net Leads":   salesMonthly.net_leads[m]   ?? 0,
-    "Appts Set":   salesMonthly.appts_set[m]   ?? 0,
-    Contracts:     salesMonthly.contracts[m]   ?? 0,
+    "Gross Leads":   salesMonthly.gross_leads[m]    ?? 0,
+    "Net Leads":     salesMonthly.net_leads[m]      ?? 0,
+    "Appts Set":     salesMonthly.appts_set[m]      ?? 0,
+    "Appts Executed":salesMonthly.appts_executed[m] ?? 0,
+    Contracts:       salesMonthly.contracts[m]      ?? 0,
   }));
 
   const dailyTrendData = dailyDates.length > 0
@@ -227,13 +251,13 @@ export default function Overview() {
 
   const weekChartData = MONTHS.length >= 2
     ? [
-        { period: prevMonth,   "Gross Leads": companyWeekly.gross_leads[prevMonth]   ?? 0, "Net Leads": companyWeekly.net_leads[prevMonth]   ?? 0, "Appts Set": companyWeekly.appts_scheduled[prevMonth]   ?? 0, Contracts: 0 },
-        { period: latestMonth, "Gross Leads": companyWeekly.gross_leads[latestMonth] ?? 0, "Net Leads": companyWeekly.net_leads[latestMonth] ?? 0, "Appts Set": companyWeekly.appts_scheduled[latestMonth] ?? 0, Contracts: 0 },
+        { period: prevMonth,   "Gross Leads": companyWeekly.gross_leads[prevMonth]   ?? 0, "Net Leads": companyWeekly.net_leads[prevMonth]   ?? 0, "Appts Set": companyWeekly.appts_scheduled[prevMonth]   ?? 0, "Appts Executed": salesMonthly.appts_executed[prevMonth]   ?? 0, Contracts: 0 },
+        { period: latestMonth, "Gross Leads": companyWeekly.gross_leads[latestMonth] ?? 0, "Net Leads": companyWeekly.net_leads[latestMonth] ?? 0, "Appts Set": companyWeekly.appts_scheduled[latestMonth] ?? 0, "Appts Executed": salesMonthly.appts_executed[latestMonth] ?? 0, Contracts: 0 },
       ]
-    : [{ period: latestMonth, "Gross Leads": companyWeekly.gross_leads[latestMonth] ?? 0, "Net Leads": companyWeekly.net_leads[latestMonth] ?? 0, "Appts Set": companyWeekly.appts_scheduled[latestMonth] ?? 0, Contracts: 0 }];
+    : [{ period: latestMonth, "Gross Leads": companyWeekly.gross_leads[latestMonth] ?? 0, "Net Leads": companyWeekly.net_leads[latestMonth] ?? 0, "Appts Set": companyWeekly.appts_scheduled[latestMonth] ?? 0, "Appts Executed": salesMonthly.appts_executed[latestMonth] ?? 0, Contracts: 0 }];
 
   const quarterlyChartData = (["Q1","Q2","Q3","Q4"] as const)
-    .map((q) => ({ period: q, "Gross Leads": quarterly[q].gross_leads, "Net Leads": quarterly[q].net_leads, "Appts Set": quarterly[q].appts_set, Contracts: quarterly[q].contracts }))
+    .map((q) => ({ period: q, "Gross Leads": quarterly[q].gross_leads, "Net Leads": quarterly[q].net_leads, "Appts Set": quarterly[q].appts_set, "Appts Executed": quarterly[q].appts_executed ?? 0, Contracts: quarterly[q].contracts }))
     .filter((q) => q["Gross Leads"] > 0 || q.Contracts > 0);
 
   const chartData = (() => {
@@ -242,7 +266,7 @@ export default function Overview() {
         case "day":     return dailyTrendData;
         case "week":    return weekChartData;
         case "quarter": return quarterlyChartData.length > 0 ? quarterlyChartData : trendData;
-        case "year":    return [{ period: "YTD", "Gross Leads": ytd.gross_leads, "Net Leads": ytd.net_leads, "Appts Set": ytd.appts_set, Contracts: ytd.contracts }];
+        case "year":    return [{ period: "YTD", "Gross Leads": ytd.gross_leads, "Net Leads": ytd.net_leads, "Appts Set": ytd.appts_set, "Appts Executed": ytd.appts_executed ?? 0, Contracts: ytd.contracts }];
         case "month":
         default:        return trendData;
       }
@@ -254,8 +278,8 @@ export default function Overview() {
   const chartXKey = effectivePeriod === "day" ? "date" : effectivePeriod === "month" ? "month" : "period";
   const chartLines = effectivePeriod === "day"
     ? ["Jeff H Appts", "Brandon Appts"]
-    : ["Gross Leads", "Net Leads", "Appts Set", "Contracts"];
-  const lineColors = ["hsl(var(--chart-1))", "hsl(var(--chart-3))", "hsl(var(--chart-2))", "hsl(var(--chart-4))"];
+    : ["Gross Leads", "Net Leads", "Appts Set", "Appts Executed", "Contracts"];
+  const lineColors = ["hsl(var(--chart-1))", "hsl(var(--chart-3))", "hsl(var(--chart-2))", "hsl(var(--chart-5))", "hsl(var(--chart-4))"];
 
   // Revenue chart — per-month goals from Asana
   const revenueMonthlyData = activeMonths.map((m) => ({
@@ -601,10 +625,11 @@ export default function Overview() {
                   <YAxis {...CHART_AXIS} />
                   <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
                   <Legend {...CHART_LEGEND} />
-                  <Bar {...BAR_DEFAULTS} dataKey="Gross Leads" fill="hsl(var(--chart-1))" />
-                  <Bar {...BAR_DEFAULTS} dataKey="Net Leads"   fill="hsl(var(--chart-3))" />
-                  <Bar {...BAR_DEFAULTS} dataKey="Appts Set"   fill="hsl(var(--chart-2))" />
-                  <Bar {...BAR_DEFAULTS} dataKey="Contracts"   fill="hsl(var(--chart-4))" />
+                  <Bar {...BAR_DEFAULTS} dataKey="Gross Leads"    fill="hsl(var(--chart-1))" />
+                  <Bar {...BAR_DEFAULTS} dataKey="Net Leads"      fill="hsl(var(--chart-3))" />
+                  <Bar {...BAR_DEFAULTS} dataKey="Appts Set"      fill="hsl(var(--chart-2))" />
+                  <Bar {...BAR_DEFAULTS} dataKey="Appts Executed" fill="hsl(var(--chart-5))" />
+                  <Bar {...BAR_DEFAULTS} dataKey="Contracts"      fill="hsl(var(--chart-4))" />
                 </BarChart>
               ) : (
                 <LineChart data={chartData} margin={CHART_MARGIN}>
@@ -632,42 +657,56 @@ export default function Overview() {
         </Card>
       </Section>
 
-      {/* CCC + Current Pipeline Deals */}
+      {/* Follow-Through Rate + Current Pipeline Deals */}
       <div className="grid grid-cols-12 gap-3">
         <Card
-          className={`col-span-12 md:col-span-4 ${cccStatus === "red" ? "kpi-alert-pulse" : ""}`}
+          className={`col-span-12 md:col-span-4 ${followThroughStatus === "red" ? "kpi-alert-pulse" : ""}`}
           padding="p-5"
         >
           <div className="flex items-center justify-between">
             <KpiTooltip
               label={
                 <span className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
-                  Cash Conversion Cycle
+                  Follow-Through Rate
                 </span>
               }
-              note={KPI_NOTES.cash_conversion_cycle}
-              title="Cash Conversion Cycle"
+              note="Percentage of signed contracts that did NOT drop. Calculated as (contracts − dropped contracts) ÷ contracts. Company benchmark: 85% or better."
+              title="Follow-Through Rate"
             />
-            <StoplightBadge status={cccStatus} />
+            <StoplightBadge status={followThroughStatus} />
           </div>
           <div className="mt-3 flex items-baseline gap-2">
-            <div className="scorecard tabular text-5xl text-primary">{ccc}</div>
-            <div className="text-sm text-muted-foreground">days</div>
+            <div className="scorecard tabular text-5xl text-primary">{Math.round(followThroughYtd * 100)}</div>
+            <div className="text-sm text-muted-foreground">% YTD</div>
           </div>
           <div className="mt-2 text-sm text-muted-foreground">
-            Target {cccTarget} days — {Math.abs(cccTarget - ccc)} days {ccc <= cccTarget ? "ahead" : "over"}
+            Target {Math.round(followThroughTarget * 100)}% — {followThroughYtd >= followThroughTarget ? "on track" : `${Math.round((followThroughTarget - followThroughYtd) * 100)} pts to goal`}
           </div>
           <div className="mt-4">
-            <ProgressBar value={ccc} max={cccTarget} status={cccStatus} />
+            <ProgressBar value={Math.round(followThroughYtd * 100)} max={Math.round(followThroughTarget * 100)} status={followThroughStatus} />
             <div className="mt-2 flex justify-between text-[11px] text-muted-foreground num">
-              <span>0</span>
-              <span>Target: {cccTarget}d</span>
+              <span>0%</span>
+              <span>Target: {Math.round(followThroughTarget * 100)}%</span>
             </div>
           </div>
-          <div className="mt-4 text-[13px] text-muted-foreground border-t pt-3">
-            Cash on hand covers{" "}
-            <span className="font-semibold text-foreground">{company.cash_on_hand_days} days</span>{" "}
-            of operating runway.
+          <div className="mt-4 grid grid-cols-2 gap-3 border-t pt-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Dropped · {latestMonth}</div>
+              <div className="text-xl font-semibold tabular-nums mt-0.5">
+                {droppedThisMonth}
+                <span className="text-[11px] text-muted-foreground ml-1">of {contractsThisMonth}</span>
+              </div>
+            </div>
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Dropped · YTD</div>
+              <div className="text-xl font-semibold tabular-nums mt-0.5">
+                {droppedYtd}
+                <span className="text-[11px] text-muted-foreground ml-1">of {contractsYtd}</span>
+              </div>
+            </div>
+          </div>
+          <div className="mt-3 text-[11px] text-muted-foreground/80 border-t pt-2">
+            Cash on hand: <span className="font-semibold text-foreground">{company.cash_on_hand_days} days</span> runway · CCC: <span className="font-semibold text-foreground">{ccc}d</span> (see breakdown below)
           </div>
         </Card>
 
@@ -689,13 +728,20 @@ export default function Overview() {
               <span className="ml-2">{transactions.activeFiles} active</span>
             </div>
           </div>
+          <div className="mb-2 text-[10px] text-muted-foreground/80 flex items-center gap-3 flex-wrap">
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-status-red inline-block"></span>Red = stage is <em className="not-italic font-semibold">File Issue</em> or <em className="not-italic font-semibold">Follow-Up Boss</em>, escalation flag, or past target close date</span>
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-status-yellow inline-block"></span>Yellow = delay flagged</span>
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-status-green inline-block"></span>Green = on track</span>
+          </div>
           <div className="space-y-1">
             {transactions.dealFiles
               .slice()
               .sort((a, b) => b.projectedRevenue - a.projectedRevenue)
               .slice(0, 10)
               .map((deal, i) => {
-                const status = deal.hasEscalation || deal.pastTarget
+                const stageLower = (deal.stage || "").toLowerCase();
+                const stuckStage = stageLower.includes("file issue") || stageLower.includes("follow-up boss") || stageLower.includes("follow up boss");
+                const status = deal.hasEscalation || deal.pastTarget || stuckStage
                   ? "red"
                   : deal.hasDelay
                   ? "yellow"
@@ -718,10 +764,14 @@ export default function Overview() {
                     <StoplightDot status={status} className="!h-2 !w-2" />
                     <div className="flex-1 min-w-0">
                       <div className="text-sm text-foreground truncate">{deal.address}</div>
-                      <div className="text-[11px] text-muted-foreground truncate">
-                        {deal.stage || "In progress"}
-                        {deal.tc ? ` · ${deal.tc}` : ""}
-                        {deal.daysInPipeline > 0 ? ` · ${deal.daysInPipeline}d` : ""}
+                      <div className="text-[11px] text-muted-foreground truncate flex items-center gap-1.5">
+                        <span className={stuckStage ? "text-status-red font-semibold" : ""}>{deal.stage || "In progress"}</span>
+                        {deal.tc ? <span>· {deal.tc}</span> : null}
+                        {deal.daysInPipeline > 0 && (
+                          <span className={`px-1.5 py-px rounded text-[10px] tabular-nums ${stuckStage ? "bg-status-red/15 text-status-red" : "bg-muted/40"}`}>
+                            {deal.daysInPipeline}d
+                          </span>
+                        )}
                       </div>
                     </div>
                     <div className={`text-sm font-semibold num ${valueColor}`}>
