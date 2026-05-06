@@ -198,9 +198,13 @@ function daysBetween(a: Date | null, b: Date | null): number | null {
 
 const MONTH_SHORT = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
-// Column names in the Sales 2026 KPIs sheet for each month
-const SALES_MONTH_COLS = [
-  "JAN (Dec 29-Feb1)", "FEB (Feb 2-Mar1)", "MAR (2-29)", "APR", "MAY", "JUN",
+// Month-prefix tokens used to match Sales 2026 KPIs column headers.
+// We do prefix-matching at runtime (case-insensitive) because the header
+// often has a date-range suffix that the team edits week-to-week, e.g.
+// "JAN (Dec 29-Feb1)", "APR (30-4)", "MAY (5-31)". Hardcoding the exact
+// header text was causing months to silently fall out of the parser.
+const SALES_MONTH_PREFIXES = [
+  "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
   "JULY", "AUG", "SEPT", "OCT", "NOV", "DEC",
 ];
 
@@ -341,6 +345,26 @@ export async function fetchAllKpiData() {
   // The header key for the first column (metric name). Most sheets use "KPIs (Q2 Targets)"
   // but if Pipedream returns a different header shape, fall back to the first header.
   const firstHeader = (salesKpis.headers && salesKpis.headers[0]) || "KPIs (Q2 Targets)";
+
+  // Resolve actual column header for each month at runtime via prefix match.
+  // The team frequently edits the parenthetical date range in the header
+  // (e.g. "APR" -> "APR (30-4)"), which used to silently break parsing for
+  // that month. We now match by leading month token, case-insensitive.
+  const salesHeaders: string[] = (salesKpis.headers || []).map((h: any) => String(h || ""));
+  const SALES_MONTH_COLS: string[] = SALES_MONTH_PREFIXES.map((prefix) => {
+    const target = prefix.toUpperCase();
+    // Strict prefix match first (e.g. "APR" matches "APR (30-4)")
+    let found = salesHeaders.find((h) => {
+      const u = h.toUpperCase().trim();
+      return u === target || u.startsWith(target + " ") || u.startsWith(target + "(");
+    });
+    if (!found) {
+      // Soft fallback: any header that starts with the prefix
+      found = salesHeaders.find((h) => h.toUpperCase().trim().startsWith(target));
+    }
+    return found || prefix; // fall back to prefix; row[prefix] will simply return undefined
+  });
+  console.log(`[sheets] resolved SALES_MONTH_COLS: ${JSON.stringify(SALES_MONTH_COLS)}`);
 
   const metricLookup: Record<string, SheetRow> = {};
   for (const row of salesKpis.rows) {
