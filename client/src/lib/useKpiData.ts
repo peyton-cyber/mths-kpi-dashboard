@@ -256,6 +256,29 @@ export interface KpiData {
     source: "mock" | "live";
     lastUpdated: string;
   };
+  dispoFub?: DispoFubData;
+}
+
+export interface DispoFubData {
+  /** Live dispo deals NOT yet closed (excludes Novation/Flip/Rental/Listing-Referral pipelines) */
+  totalActiveDispo: number;
+  /** Closed dispo deals only */
+  totalClosedDispo: number;
+  /** Dropped pipeline (across all deal types but typically dispo) */
+  totalDropped: number;
+  /** Revenue assigned per ISO-week, last 12 weeks */
+  revenueAssignedByWeek: { weekStart: string; total: number; count: number }[];
+  /** Average assignment fee per deal, rolling 30 days */
+  avgAssignmentPerDeal: number;
+  /** Stage breakdown of currently active dispo deals */
+  stageBreakdown: { stage: string; count: number; totalPrice: number }[];
+  /** Per-owner ownership — each deal counted exactly once (Joseph/Jeb dedup) */
+  byOwner: { owner: string; activeCount: number; closedCount: number; assignedRev: number }[];
+  /** Deal type breakdown (Cash, Subject-To, etc.) */
+  byDealType: { dealType: string; count: number; gross: number }[];
+  source: "fub";
+  fetchedAt: string;
+  error?: string;
 }
 
 export interface RedStreakAlert {

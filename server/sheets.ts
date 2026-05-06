@@ -12,6 +12,7 @@ import {
   fetchSheetRaw,
   type SheetResponse as ClientSheetResponse,
 } from "./google-sheets-client";
+import { fetchDispoFubData, type DispoFubData } from "./fub";
 
 // Sheet IDs
 const MASTER_KPIS = "1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0";
@@ -227,8 +228,8 @@ export async function fetchAllKpiData() {
   const prevRiseTab = `Q${_prevQuarter} ${_prevYear} - RISE`;
   console.log(`[sheets] RISE tabs (auto): current="${currentRiseTab}", prev="${prevRiseTab}"`);
 
-  // Fetch sheets and Asana sprint goals in parallel
-  const [sheets, sprintGoalsList] = await Promise.all([
+  // Fetch sheets, Asana sprint goals, and Follow Up Boss dispo data in parallel
+  const [sheets, sprintGoalsList, dispoFub] = await Promise.all([
     fetchSheetsParallel([
       { label: "mktg", spreadsheetId: MASTER_KPIS, sheetName: "Marketing 2026 KPIs" },
       { label: "deals", spreadsheetId: MASTER_KPIS, sheetName: "TOP 10 DEALS" },
@@ -251,7 +252,28 @@ export async function fetchAllKpiData() {
       console.error(`[asana] sprint fetch failed: ${(e?.message || "").slice(0, 200)}`);
       return [] as SprintGoals[];
     }),
+    fetchDispoFubData(process.env.FUB_API_KEY || "").catch((e): DispoFubData => {
+      console.error(`[fub] dispo fetch failed: ${(e?.message || "").slice(0, 200)}`);
+      return {
+        totalActiveDispo: 0,
+        totalClosedDispo: 0,
+        totalDropped: 0,
+        revenueAssignedByWeek: [],
+        avgAssignmentPerDeal: 0,
+        stageBreakdown: [],
+        byOwner: [],
+        byDealType: [],
+        source: "fub",
+        fetchedAt: new Date().toISOString(),
+        error: `FUB fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
+      };
+    }),
   ]);
+  if (dispoFub.error) {
+    console.warn(`[fub] dispo data returned error: ${dispoFub.error}`);
+  } else {
+    console.log(`[fub] dispo: ${dispoFub.totalActiveDispo} active, ${dispoFub.totalClosedDispo} closed, ${dispoFub.totalDropped} dropped, ${dispoFub.byOwner.length} owners`);
+  }
 
   // Map RISE tabs to legacy keys (existing parsing code uses riseQ2/riseQ1)
   // We treat "current quarter" as riseQ2 and "previous quarter" as riseQ1 from the
@@ -563,7 +585,29 @@ export async function fetchAllKpiData() {
     dealsByMonth[mk].push({ deal, gross, closeDate });
 
     // Per-person revenue/commission attribution (only for actual closed deals)
+    //
+    // Jeb / Joseph dedup (Aug 5 leadership feedback):
+    //   Multiple dispo people sometimes get a non-zero commission on the same
+    //   deal. We still record their commission accurately, but we only credit
+    //   gross + dealCount to the dispo agent with the LARGER commission on
+    //   that row. This prevents double-counting gross revenue / deal counts
+    //   when both Jeb and Joseph touched the same deal.
+    const DISPO_DEDUP_GROUP = new Set(["Joseph Hooper", "Jeb Burchett"]);
     const agentsOnDeal: string[] = [];
+    // First pass: pick the dedup winner (larger commission within the dispo group)
+    let dispoWinner: string | null = null;
+    let dispoWinnerVal = 0;
+    for (const pc of personCols) {
+      const name = pc.trim();
+      if (!DISPO_DEDUP_GROUP.has(name)) continue;
+      const val = parseMoney(row[pc]);
+      if (val > dispoWinnerVal) {
+        dispoWinner = name;
+        dispoWinnerVal = val;
+      }
+    }
+    // Second pass: record commission for everyone, but only credit gross/count
+    //   to the dedup winner (or to non-dispo agents who are not in the group).
     for (const pc of personCols) {
       const val = parseMoney(row[pc]);
       if (val > 0) {
@@ -571,11 +615,15 @@ export async function fetchAllKpiData() {
         if (!perPersonCommissions[name]) perPersonCommissions[name] = {};
         perPersonCommissions[name][mk] = (perPersonCommissions[name][mk] || 0) + val;
         agentsOnDeal.push(name);
-        // Per-agent gross & deal count
-        if (!perAgentGrossByMonth[name]) perAgentGrossByMonth[name] = {};
-        perAgentGrossByMonth[name][mk] = (perAgentGrossByMonth[name][mk] || 0) + gross;
-        if (!perAgentDealCountByMonth[name]) perAgentDealCountByMonth[name] = {};
-        perAgentDealCountByMonth[name][mk] = (perAgentDealCountByMonth[name][mk] || 0) + 1;
+        // Skip gross/dealCount for the dispo loser when both Jeb & Joseph have non-zero
+        const inDispoGroup = DISPO_DEDUP_GROUP.has(name);
+        const isDispoLoser = inDispoGroup && dispoWinner !== null && dispoWinner !== name;
+        if (!isDispoLoser) {
+          if (!perAgentGrossByMonth[name]) perAgentGrossByMonth[name] = {};
+          perAgentGrossByMonth[name][mk] = (perAgentGrossByMonth[name][mk] || 0) + gross;
+          if (!perAgentDealCountByMonth[name]) perAgentDealCountByMonth[name] = {};
+          perAgentDealCountByMonth[name][mk] = (perAgentDealCountByMonth[name][mk] || 0) + 1;
+        }
       }
     }
 
@@ -2262,6 +2310,7 @@ export async function fetchAllKpiData() {
       marketingSourceRollup,
     },
     bouncieDriveTime: buildBouncieMock(),
+    dispoFub,
   };
 }
 
