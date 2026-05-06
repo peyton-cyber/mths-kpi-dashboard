@@ -726,6 +726,61 @@ export async function fetchAllKpiData() {
     }
   }
 
+  // ================================================================
+  // Weekly Marketing month patch (Phase 6.1)
+  // ----------------------------------------------------------------
+  // The Sales 2026 KPIs tab can lag behind the Weekly Marketing tab
+  // (e.g. April had 320 gross leads in Weekly Marketing but the Sales
+  // KPIs tab was completely empty for April). Fold those leads into
+  // salesMonthly so per-month/quarter views aren't blank.
+  // ================================================================
+  const SHORT_TO_LONG: Record<string, string> = {
+    Jan: "January", Feb: "February", Mar: "March", Apr: "April",
+    May: "May", Jun: "June", Jul: "July", Aug: "August",
+    Sep: "September", Oct: "October", Nov: "November", Dec: "December",
+  };
+  if (Array.isArray(weeklyMarketing?.byMonth) && weeklyMarketing.byMonth.length > 0) {
+    const wmByLong = new Map<string, { gross: number; net: number }>();
+    for (const m of weeklyMarketing.byMonth) {
+      wmByLong.set(m.month, { gross: m.grossLead, net: m.netLead });
+    }
+    const nowM = new Date().getMonth(); // 0=Jan
+    const newlyAdded: string[] = [];
+    for (let i = 0; i < MONTH_SHORT.length; i++) {
+      if (i > nowM) break; // don't include future months
+      const mk = MONTH_SHORT[i];
+      const wk = wmByLong.get(SHORT_TO_LONG[mk]);
+      if (!wk || wk.gross <= 0) continue;
+      const salesGross = salesMonthly.gross_leads[mk] ?? 0;
+      const salesNet = salesMonthly.net_leads[mk] ?? 0;
+      // Add month if missing
+      if (!activeMonths.includes(mk)) {
+        activeMonths.push(mk);
+        newlyAdded.push(mk);
+      }
+      // Override with weekly numbers when sales is empty/lower
+      if (wk.gross > salesGross) salesMonthly.gross_leads[mk] = wk.gross;
+      if (wk.net > salesNet) salesMonthly.net_leads[mk] = wk.net;
+    }
+    // For any newly-added month, parse the rest of the metrics from Sales tab
+    // (some will be 0/null but those are real "no data yet" signals).
+    for (const mk of newlyAdded) {
+      const colIdx = MONTH_SHORT.indexOf(mk);
+      if (colIdx < 0 || colIdx >= SALES_MONTH_COLS.length) continue;
+      const col = SALES_MONTH_COLS[colIdx];
+      for (const mapping of metricMapping) {
+        // Skip leads since we already overrode them above
+        if (mapping.key === "gross_leads" || mapping.key === "net_leads") continue;
+        const row = findMetricRow(mapping.rowName);
+        if (!row) continue;
+        salesMonthly[mapping.key][mk] = mapping.parser(row[col]);
+      }
+    }
+    if (newlyAdded.length > 0) {
+      console.log(`[sheets] Phase 6.1: added months from Weekly Marketing: ${newlyAdded.join(",")}`);
+    }
+  }
+
   // Re-sort activeMonths in calendar order
   activeMonths.sort((a, b) => MONTH_SHORT.indexOf(a) - MONTH_SHORT.indexOf(b));
 
