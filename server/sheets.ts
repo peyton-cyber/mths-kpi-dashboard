@@ -742,7 +742,12 @@ export async function fetchAllKpiData() {
   const sum = (obj: Record<string, number | null>) =>
     Object.values(obj).reduce((s, v) => s + (v ?? 0), 0);
 
-  const ytd = {
+  // YTD lead counts: prefer Marketing 2026 KPIs TOTALS row (the authoritative
+  // marketing source-of-truth), then fall back to Weekly Marketing tab, then
+  // finally to Sales 2026 KPIs (which is known to undercount).
+  // We compute mktg + weekly totals later in the function, so we patch ytd
+  // post-hoc once those are available.
+  const ytd: any = {
     revenue: sum(salesMonthly.revenue),
     contracts: sum(salesMonthly.contracts),
     closed_deals: sum(salesMonthly.closed_deals),
@@ -751,6 +756,8 @@ export async function fetchAllKpiData() {
     net_leads: sum(salesMonthly.net_leads),
     appts_set: sum(salesMonthly.appts_set),
     appts_executed: sum(salesMonthly.appts_executed),
+    // Source provenance for transparency
+    _leadSource: "sales_kpis_fallback" as string,
   };
 
   const profitValues = Object.values(salesMonthly.profit_per_deal).filter(
@@ -1119,6 +1126,70 @@ export async function fetchAllKpiData() {
   marketingTotals.roas = marketingTotals.spend > 0
     ? Math.round((marketingTotals.revenue / marketingTotals.spend) * 100) / 100
     : 0;
+
+  // ================================================================
+  // YTD lead-count alignment (Phase 6 audit fix)
+  // ----------------------------------------------------------------
+  // The Sales 2026 KPIs tab is known to undercount leads (it omits
+  // sources that don't roll up there). The Marketing 2026 KPIs TOTALS
+  // row is the authoritative source of truth — fall back to the
+  // Weekly Marketing tab if marketing totals are unavailable.
+  // ================================================================
+  const mktTotalGross = marketingTotals.gross_leads || 0;
+  const mktTotalNet = marketingTotals.net_leads || 0;
+  const wkTotalGross = weeklyMarketing?.totals?.grossLead || 0;
+  const wkTotalNet = weeklyMarketing?.totals?.netLead || 0;
+
+  if (mktTotalGross > ytd.gross_leads) {
+    ytd.gross_leads = mktTotalGross;
+    ytd.net_leads = mktTotalNet;
+    ytd._leadSource = "marketing_2026_kpis_totals";
+  } else if (wkTotalGross > ytd.gross_leads) {
+    ytd.gross_leads = wkTotalGross;
+    ytd.net_leads = wkTotalNet;
+    ytd._leadSource = "weekly_marketing_tab";
+  }
+  console.log(
+    `[sheets] ytd lead source: ${ytd._leadSource}, gross=${ytd.gross_leads}, net=${ytd.net_leads} ` +
+    `(sales=${sum(salesMonthly.gross_leads)}/${sum(salesMonthly.net_leads)}, ` +
+    `mktTotals=${mktTotalGross}/${mktTotalNet}, weekly=${wkTotalGross}/${wkTotalNet})`
+  );
+
+  // Patch quarterly lead counts using Weekly Marketing byMonth aggregation,
+  // which is the granular ground-truth split per month (Sales tab undercounts).
+  if (Array.isArray(weeklyMarketing?.byMonth) && weeklyMarketing.byMonth.length > 0) {
+    const monthLookup = new Map<string, { gross: number; net: number }>();
+    for (const m of weeklyMarketing.byMonth) {
+      // weeklyMarketing.byMonth.month is short month name ("Jan", "Feb", ...)
+      monthLookup.set(m.month, { gross: m.grossLead, net: m.netLead });
+    }
+    const sumQuarter = (months: string[]) => {
+      let g = 0, n = 0;
+      for (const m of months) {
+        const v = monthLookup.get(m);
+        if (v) { g += v.gross; n += v.net; }
+      }
+      return { g, n };
+    };
+    const patchQ = (q: { gross_leads: number; net_leads: number }, months: string[]) => {
+      const wk = sumQuarter(months);
+      if (wk.g > q.gross_leads) {
+        q.gross_leads = wk.g;
+        q.net_leads = wk.n;
+      }
+    };
+    patchQ(quarterly.Q1, q1Months);
+    patchQ(quarterly.Q2, q2Months);
+    patchQ(quarterly.Q3, q3Months);
+    patchQ(quarterly.Q4, q4Months);
+    console.log(
+      `[sheets] quarterly leads after weekly-marketing patch: ` +
+      `Q1=${quarterly.Q1.gross_leads}/${quarterly.Q1.net_leads}, ` +
+      `Q2=${quarterly.Q2.gross_leads}/${quarterly.Q2.net_leads}, ` +
+      `Q3=${quarterly.Q3.gross_leads}/${quarterly.Q3.net_leads}, ` +
+      `Q4=${quarterly.Q4.gross_leads}/${quarterly.Q4.net_leads}`
+    );
+  }
 
   // ================================================================
   // 6. TOP 10 DEALS
