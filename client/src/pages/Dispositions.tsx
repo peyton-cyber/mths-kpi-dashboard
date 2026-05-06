@@ -46,7 +46,7 @@ export default function Dispositions() {
   const [period, setPeriod] = useState<TimePeriod>("month");
   const data = useKpi();
 
-  const { dispoWeekly, newBuyers, salesMonthly, surveyResults, ytd, activeMonths, salesActiveMonths, dailyDispo, dispoFub } = data;
+  const { dispoWeekly, newBuyers, salesMonthly, surveyResults, ytd, activeMonths, salesActiveMonths, dailyDispo, dispoFub, mailchimp } = data;
 
   const reps        = dispoWeekly.reps;
   const commissions = dispoWeekly.commissions;
@@ -568,6 +568,118 @@ export default function Dispositions() {
       {dispoFub?.error && (
         <div className="rounded-lg border border-status-yellow/40 bg-status-yellow/5 px-4 py-2.5 text-[13px] text-muted-foreground">
           Follow Up Boss dispo sync error: {dispoFub.error}
+        </div>
+      )}
+
+      {mailchimp && !mailchimp.error && mailchimp.activeSubscribers > 0 && (
+        <Section
+          title="Buyer Email · Live from Mailchimp"
+          subtitle={`${mailchimp.audienceName || "Audience"} · Last sent ${mailchimp.lastSentAt ? new Date(mailchimp.lastSentAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"} · Synced ${new Date(mailchimp.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
+        >
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="mailchimp-scorecards">
+            <Scorecard
+              label="Active Subscribers"
+              value={mailchimp.activeSubscribers.toLocaleString()}
+              subtitle={`${mailchimp.totalSubscribers.toLocaleString()} total · ${mailchimp.unsubscribed.toLocaleString()} unsub`}
+              status={mailchimp.activeSubscribers > 15000 ? "green" : mailchimp.activeSubscribers > 10000 ? "yellow" : "red"}
+            />
+            <Scorecard
+              label="Audience Open Rate"
+              value={fmtPct(mailchimp.audienceOpenRate, 1)}
+              subtitle="Lifetime · vs 21% real-estate avg"
+              status={mailchimp.audienceOpenRate >= 0.21 ? "green" : mailchimp.audienceOpenRate >= 0.15 ? "yellow" : "red"}
+            />
+            <Scorecard
+              label="Audience Click Rate"
+              value={fmtPct(mailchimp.audienceClickRate, 2)}
+              subtitle="Lifetime · vs 1.8% industry avg"
+              status={mailchimp.audienceClickRate >= 0.018 ? "green" : mailchimp.audienceClickRate >= 0.01 ? "yellow" : "red"}
+            />
+            <Scorecard
+              label="Campaigns Sent"
+              value={mailchimp.campaignCount.toLocaleString()}
+              subtitle={mailchimp.lastSentAt ? `Last: ${new Date(mailchimp.lastSentAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "All-time"}
+              status="green"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+            <Card padding="p-5">
+              <div className="flex items-baseline justify-between mb-3">
+                <h3 className="text-sm font-semibold tracking-tight">Recent Campaigns</h3>
+                <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Last {mailchimp.recentCampaigns.length}</span>
+              </div>
+              <div className="space-y-2.5" data-testid="mailchimp-campaigns">
+                {mailchimp.recentCampaigns.length === 0 ? (
+                  <div className="text-sm text-muted-foreground py-4">No recent campaigns.</div>
+                ) : (
+                  mailchimp.recentCampaigns.map((c) => {
+                    const sent = c.sendTime ? new Date(c.sendTime) : null;
+                    const openStatus = c.openRate >= 0.30 ? "green" : c.openRate >= 0.18 ? "yellow" : "red";
+                    return (
+                      <div key={c.id} className="border-b border-border last:border-0 pb-2 last:pb-0">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <div className="text-[13px] font-medium truncate" title={c.subjectLine}>{c.subjectLine}</div>
+                            <div className="text-[11px] text-muted-foreground mt-0.5">
+                              {sent ? sent.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"} · {c.emailsSent.toLocaleString()} sent
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-[12px] tabular-nums shrink-0">
+                            <div className="text-right">
+                              <div className="flex items-center gap-1.5">
+                                <StoplightDot status={openStatus} />
+                                <span className="font-semibold">{fmtPct(c.openRate, 1)}</span>
+                              </div>
+                              <div className="text-[10px] text-muted-foreground">open</div>
+                            </div>
+                            <div className="text-right">
+                              <div className="font-semibold">{fmtPct(c.clickRate, 2)}</div>
+                              <div className="text-[10px] text-muted-foreground">click</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </Card>
+
+            <Card padding="p-5">
+              <div className="flex items-baseline justify-between mb-3">
+                <h3 className="text-sm font-semibold tracking-tight">Weekly Email Volume</h3>
+                <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Last {mailchimp.weeklyVolume.length} weeks</span>
+              </div>
+              <div className="space-y-2" data-testid="mailchimp-weekly">
+                {mailchimp.weeklyVolume.length === 0 ? (
+                  <div className="text-sm text-muted-foreground py-4">No data in last 12 weeks.</div>
+                ) : (() => {
+                  const maxSent = Math.max(...mailchimp.weeklyVolume.map((w) => w.emailsSent), 1);
+                  return mailchimp.weeklyVolume.map((w) => (
+                    <div key={w.weekStart} className="space-y-1">
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="text-muted-foreground tabular-nums">{new Date(w.weekStart).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>
+                        <span className="tabular-nums">
+                          <span className="font-medium text-foreground">{w.emailsSent.toLocaleString()}</span>
+                          <span className="text-muted-foreground"> sent · {w.campaigns} {w.campaigns === 1 ? "send" : "sends"} · </span>
+                          <span className="font-medium text-foreground">{fmtPct(w.avgOpenRate, 1)}</span>
+                          <span className="text-muted-foreground"> open</span>
+                        </span>
+                      </div>
+                      <ProgressBar value={(w.emailsSent / maxSent) * 100} status={w.avgOpenRate >= 0.30 ? "green" : w.avgOpenRate >= 0.18 ? "yellow" : "red"} />
+                    </div>
+                  ));
+                })()}
+              </div>
+            </Card>
+          </div>
+        </Section>
+      )}
+
+      {mailchimp?.error && (
+        <div className="rounded-lg border border-status-yellow/40 bg-status-yellow/5 px-4 py-2.5 text-[13px] text-muted-foreground">
+          Mailchimp sync error: {mailchimp.error}
         </div>
       )}
 

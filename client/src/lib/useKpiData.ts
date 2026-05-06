@@ -257,6 +257,37 @@ export interface KpiData {
     lastUpdated: string;
   };
   dispoFub?: DispoFubData;
+  mailchimp?: MailchimpData;
+}
+
+export interface MailchimpCampaignSummary {
+  id: string;
+  subjectLine: string;
+  sendTime: string;
+  emailsSent: number;
+  opens: number;
+  uniqueOpens: number;
+  openRate: number; // 0-1
+  clicks: number;
+  uniqueClicks: number;
+  clickRate: number; // 0-1
+}
+
+export interface MailchimpData {
+  audienceName: string;
+  totalSubscribers: number;
+  activeSubscribers: number;
+  unsubscribed: number;
+  cleaned: number;
+  audienceOpenRate: number; // 0-1
+  audienceClickRate: number; // 0-1
+  campaignCount: number;
+  lastSentAt: string | null;
+  recentCampaigns: MailchimpCampaignSummary[];
+  weeklyVolume: { weekStart: string; campaigns: number; emailsSent: number; avgOpenRate: number; avgClickRate: number }[];
+  source: "mailchimp";
+  fetchedAt: string;
+  error?: string;
 }
 
 export interface DispoFubData {

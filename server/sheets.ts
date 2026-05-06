@@ -13,6 +13,7 @@ import {
   type SheetResponse as ClientSheetResponse,
 } from "./google-sheets-client";
 import { fetchDispoFubData, type DispoFubData } from "./fub";
+import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
 
 // Sheet IDs
 const MASTER_KPIS = "1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0";
@@ -228,8 +229,8 @@ export async function fetchAllKpiData() {
   const prevRiseTab = `Q${_prevQuarter} ${_prevYear} - RISE`;
   console.log(`[sheets] RISE tabs (auto): current="${currentRiseTab}", prev="${prevRiseTab}"`);
 
-  // Fetch sheets, Asana sprint goals, and Follow Up Boss dispo data in parallel
-  const [sheets, sprintGoalsList, dispoFub] = await Promise.all([
+  // Fetch sheets, Asana sprint goals, FUB dispo data, and Mailchimp in parallel
+  const [sheets, sprintGoalsList, dispoFub, mailchimp] = await Promise.all([
     fetchSheetsParallel([
       { label: "mktg", spreadsheetId: MASTER_KPIS, sheetName: "Marketing 2026 KPIs" },
       { label: "deals", spreadsheetId: MASTER_KPIS, sheetName: "TOP 10 DEALS" },
@@ -268,11 +269,35 @@ export async function fetchAllKpiData() {
         error: `FUB fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
       };
     }),
+    fetchMailchimpData(process.env.MAILCHIMP_API_KEY || "").catch((e): MailchimpData => {
+      console.error(`[mailchimp] fetch failed: ${(e?.message || "").slice(0, 200)}`);
+      return {
+        audienceName: "",
+        totalSubscribers: 0,
+        activeSubscribers: 0,
+        unsubscribed: 0,
+        cleaned: 0,
+        audienceOpenRate: 0,
+        audienceClickRate: 0,
+        campaignCount: 0,
+        lastSentAt: null,
+        recentCampaigns: [],
+        weeklyVolume: [],
+        source: "mailchimp",
+        fetchedAt: new Date().toISOString(),
+        error: `Mailchimp fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
+      };
+    }),
   ]);
   if (dispoFub.error) {
     console.warn(`[fub] dispo data returned error: ${dispoFub.error}`);
   } else {
     console.log(`[fub] dispo: ${dispoFub.totalActiveDispo} active, ${dispoFub.totalClosedDispo} closed, ${dispoFub.totalDropped} dropped, ${dispoFub.byOwner.length} owners`);
+  }
+  if (mailchimp.error) {
+    console.warn(`[mailchimp] returned error: ${mailchimp.error}`);
+  } else {
+    console.log(`[mailchimp] ${mailchimp.activeSubscribers} active subs, ${mailchimp.recentCampaigns.length} recent campaigns, audience open ${(mailchimp.audienceOpenRate*100).toFixed(1)}%`);
   }
 
   // Map RISE tabs to legacy keys (existing parsing code uses riseQ2/riseQ1)
@@ -2311,6 +2336,7 @@ export async function fetchAllKpiData() {
     },
     bouncieDriveTime: buildBouncieMock(),
     dispoFub,
+    mailchimp,
   };
 }
 
