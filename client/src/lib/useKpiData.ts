@@ -258,6 +258,39 @@ export interface KpiData {
   };
   dispoFub?: DispoFubData;
   mailchimp?: MailchimpData;
+  weeklyMarketing?: WeeklyMarketingData;
+}
+
+export interface WeeklyMarketingRecord {
+  month: string;
+  week: string;
+  weekStart: string;
+  source: string;
+  grossLead: number;
+  netLead: number;
+  activeListing: number;
+  noCompsOrFit: number;
+  outOfBuyBox: number;
+  noReply: number;
+}
+
+export interface WeeklyMarketingData {
+  records: WeeklyMarketingRecord[];
+  byWeek: {
+    month: string; week: string; weekKey: string;
+    grossLead: number; netLead: number; netToGrossPct: number; sourceCount: number;
+  }[];
+  bySource: {
+    source: string;
+    grossLead: number; netLead: number; netToGrossPct: number;
+    activeListing: number; noCompsOrFit: number; outOfBuyBox: number; noReply: number;
+    disqualified: number;
+  }[];
+  byMonth: { month: string; grossLead: number; netLead: number; netToGrossPct: number }[];
+  totals: { grossLead: number; netLead: number; netToGrossPct: number; weeksCovered: number; sourcesCovered: number };
+  source: "google_sheets";
+  fetchedAt: string;
+  error?: string;
 }
 
 export interface MailchimpCampaignSummary {

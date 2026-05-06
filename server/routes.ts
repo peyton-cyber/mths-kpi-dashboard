@@ -337,6 +337,61 @@ export async function registerRoutes(
     res.json({ status: "ok" });
   });
 
+  // ─── Slack digest ─ weekly KPI summary as Markdown ready to post ───
+  // Returns the digest as JSON — frontend or external cron can read this and
+  // post to Slack when desired. Auto-posting stays paused per user request.
+  app.get("/api/slack-digest", requireAuth, (_req, res) => {
+    try {
+      const data = getKpiData();
+      if (!data) {
+        res.status(503).json({ error: "No data available yet" });
+        return;
+      }
+      const f = data.financials || {};
+      const fub = data.dispoFub || {};
+      const mc = data.mailchimp || {};
+      const wm = data.weeklyMarketing || {};
+      const last4Weeks = (wm.byWeek || []).slice(-4);
+      const last4Gross = last4Weeks.reduce((s: number, w: any) => s + (w.grossLead || 0), 0);
+      const last4Net = last4Weeks.reduce((s: number, w: any) => s + (w.netLead || 0), 0);
+      const last4NetPct = last4Gross > 0 ? Math.round((last4Net / last4Gross) * 100) : 0;
+      const topSrc = (wm.bySource || [])[0];
+
+      const fmt$ = (n: number) =>
+        "$" + (Math.round(n) || 0).toLocaleString();
+      const lines: string[] = [];
+      lines.push(`*MTHS Weekly KPI Digest · ${new Date().toLocaleDateString("en-US", { dateStyle: "medium" })}*`);
+      lines.push("");
+      lines.push("*Revenue*");
+      lines.push(`• YTD Revenue: ${fmt$(f.ytd_revenue || 0)}`);
+      lines.push(`• Closed deals: ${f.ytd_closed_deals || 0}`);
+      lines.push(`• Active contracts: ${f.ytd_active_contracts || 0}`);
+      lines.push("");
+      lines.push("*Dispo Pipeline (FUB live)*");
+      lines.push(`• Active: ${fub.totalActiveDispo || 0} · Closed: ${fub.totalClosedDispo || 0} · Dropped: ${fub.totalDropped || 0}`);
+      lines.push(`• Avg fee: ${fmt$(fub.avgAssignmentPerDeal || 0)}`);
+      lines.push("");
+      lines.push("*Marketing Funnel · last 4 weeks*");
+      lines.push(`• ${last4Gross.toLocaleString()} gross / ${last4Net.toLocaleString()} net (${last4NetPct}%)`);
+      if (topSrc) lines.push(`• Top source: ${topSrc.source} — ${topSrc.netLead}/${topSrc.grossLead} net`);
+      lines.push("");
+      lines.push("*Buyer Email (Mailchimp)*");
+      lines.push(`• ${(mc.activeSubscribers || 0).toLocaleString()} active subs · ${((mc.audienceOpenRate || 0) * 100).toFixed(1)}% open · ${((mc.audienceClickRate || 0) * 100).toFixed(2)}% click`);
+      lines.push("");
+      lines.push(`<https://mths-kpi-dashboard.netlify.app|Open Dashboard>`);
+
+      res.json({
+        markdown: lines.join("\n"),
+        generatedAt: new Date().toISOString(),
+        autopost: false,
+        note: "Slack auto-posting paused. Hit POST /api/slack-digest/post when you want to send.",
+      });
+    } catch (err: any) {
+      console.error("Error building slack digest");
+      res.status(500).json({ error: "Failed to build digest" });
+    }
+  });
+
   // ─── Alerts + Ack workflow ──────────────────────────────────────────
 
   // List active red-streak alerts with ack status merged in.

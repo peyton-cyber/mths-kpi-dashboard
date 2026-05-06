@@ -14,6 +14,7 @@ import {
 } from "./google-sheets-client";
 import { fetchDispoFubData, type DispoFubData } from "./fub";
 import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
+import { fetchWeeklyMarketingData, type WeeklyMarketingData } from "./weeklyMarketing";
 
 // Sheet IDs
 const MASTER_KPIS = "1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0";
@@ -229,8 +230,8 @@ export async function fetchAllKpiData() {
   const prevRiseTab = `Q${_prevQuarter} ${_prevYear} - RISE`;
   console.log(`[sheets] RISE tabs (auto): current="${currentRiseTab}", prev="${prevRiseTab}"`);
 
-  // Fetch sheets, Asana sprint goals, FUB dispo data, and Mailchimp in parallel
-  const [sheets, sprintGoalsList, dispoFub, mailchimp] = await Promise.all([
+  // Fetch sheets, Asana sprint goals, FUB dispo data, Mailchimp, and Weekly Marketing in parallel
+  const [sheets, sprintGoalsList, dispoFub, mailchimp, weeklyMarketing] = await Promise.all([
     fetchSheetsParallel([
       { label: "mktg", spreadsheetId: MASTER_KPIS, sheetName: "Marketing 2026 KPIs" },
       { label: "deals", spreadsheetId: MASTER_KPIS, sheetName: "TOP 10 DEALS" },
@@ -288,7 +289,22 @@ export async function fetchAllKpiData() {
         error: `Mailchimp fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
       };
     }),
+    fetchWeeklyMarketingData().catch((e): WeeklyMarketingData => {
+      console.error(`[weeklyMarketing] fetch failed: ${(e?.message || "").slice(0, 200)}`);
+      return {
+        records: [], byWeek: [], bySource: [], byMonth: [],
+        totals: { grossLead: 0, netLead: 0, netToGrossPct: 0, weeksCovered: 0, sourcesCovered: 0 },
+        source: "google_sheets",
+        fetchedAt: new Date().toISOString(),
+        error: `weeklyMarketing fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
+      };
+    }),
   ]);
+  if (weeklyMarketing.error) {
+    console.warn(`[weeklyMarketing] returned error: ${weeklyMarketing.error}`);
+  } else {
+    console.log(`[weeklyMarketing] ${weeklyMarketing.records.length} records, ${weeklyMarketing.totals.weeksCovered} weeks, ${weeklyMarketing.totals.sourcesCovered} sources, ${weeklyMarketing.totals.grossLead} gross / ${weeklyMarketing.totals.netLead} net`);
+  }
   if (dispoFub.error) {
     console.warn(`[fub] dispo data returned error: ${dispoFub.error}`);
   } else {
@@ -2337,6 +2353,7 @@ export async function fetchAllKpiData() {
     bouncieDriveTime: buildBouncieMock(),
     dispoFub,
     mailchimp,
+    weeklyMarketing,
   };
 }
 

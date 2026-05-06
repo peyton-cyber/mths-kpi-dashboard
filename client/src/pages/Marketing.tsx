@@ -440,6 +440,141 @@ export default function Marketing() {
           </div>
         </Card>
       </div>
+
+      {/* Weekly Marketing Funnel — sourced from Weekly 2026 Marketing tab */}
+      <WeeklyMarketingFunnel kpiData={kpiData} />
     </div>
+  );
+}
+
+function WeeklyMarketingFunnel({ kpiData }: { kpiData: ReturnType<typeof useKpi> }) {
+  const wm = kpiData?.weeklyMarketing;
+  if (!wm || (wm.records?.length ?? 0) === 0) return null;
+
+  const t = wm.totals;
+  const topSources = wm.bySource.slice(0, 6);
+  const weekTrend = wm.byWeek.slice(-12).map((w) => ({
+    label: `${w.month.slice(0, 3)} ${w.week}`,
+    gross: w.grossLead,
+    net: w.netLead,
+    netPct: Math.round(w.netToGrossPct),
+  }));
+  // Disqualification breakdown across all sources
+  const dqAll = wm.bySource.reduce(
+    (a, s) => ({
+      activeListing: a.activeListing + s.activeListing,
+      noCompsOrFit: a.noCompsOrFit + s.noCompsOrFit,
+      outOfBuyBox: a.outOfBuyBox + s.outOfBuyBox,
+      noReply: a.noReply + s.noReply,
+    }),
+    { activeListing: 0, noCompsOrFit: 0, outOfBuyBox: 0, noReply: 0 }
+  );
+  const dqRows = [
+    { label: "Active Listing", v: dqAll.activeListing },
+    { label: "No Comps / Fit", v: dqAll.noCompsOrFit },
+    { label: "Out of Buy Box", v: dqAll.outOfBuyBox },
+    { label: "No Reply", v: dqAll.noReply },
+  ];
+  const dqTotal = dqRows.reduce((s, r) => s + r.v, 0);
+
+  return (
+    <Section
+      title="Weekly Marketing Funnel"
+      subtitle={`Live · ${t.weeksCovered} weeks · ${t.sourcesCovered} sources · ${t.grossLead.toLocaleString()} gross / ${t.netLead.toLocaleString()} net (${fmtPct(t.netToGrossPct / 100, 0)})`}
+    >
+      {/* Headline scorecards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <Card>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-1">Gross Leads</div>
+          <div className="num text-2xl font-semibold">{t.grossLead.toLocaleString()}</div>
+        </Card>
+        <Card>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-1">Net Leads</div>
+          <div className="num text-2xl font-semibold">{t.netLead.toLocaleString()}</div>
+        </Card>
+        <Card>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-1">Net : Gross</div>
+          <div className="num text-2xl font-semibold">{fmtPct(t.netToGrossPct / 100, 0)}</div>
+        </Card>
+        <Card>
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-1">Weeks Tracked</div>
+          <div className="num text-2xl font-semibold">{t.weeksCovered}</div>
+        </Card>
+      </div>
+
+      {/* Two-column: weekly trend + source breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-2">
+          <div className="text-sm font-semibold mb-2">Last 12 Weeks · Gross vs Net Leads</div>
+          <div style={{ width: "100%", height: 280 }}>
+            <ResponsiveContainer>
+              <ComposedChart data={weekTrend} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <CartesianGrid stroke={CHART_GRID_COLOR} strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" {...CHART_AXIS} />
+                <YAxis {...CHART_AXIS} />
+                <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Bar dataKey="gross" name="Gross" fill="hsl(var(--chart-2))" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="net" name="Net" fill="hsl(var(--chart-1))" radius={[4, 4, 0, 0]} />
+                <Line type="monotone" dataKey="netPct" name="Net %" stroke="hsl(var(--primary))" strokeWidth={2} dot={false} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+
+        <Card>
+          <div className="text-sm font-semibold mb-2">Why Leads Die · YTD</div>
+          <div className="space-y-2">
+            {dqRows.map((r) => {
+              const pct = dqTotal > 0 ? (r.v / dqTotal) * 100 : 0;
+              return (
+                <div key={r.label}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-muted-foreground">{r.label}</span>
+                    <span className="num font-semibold">{r.v.toLocaleString()} <span className="text-muted-foreground font-normal">({pct.toFixed(0)}%)</span></span>
+                  </div>
+                  <ProgressBar value={pct} max={100} />
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      </div>
+
+      {/* Source quality table */}
+      <Card padding="p-0" className="mt-4">
+        <div className="px-5 pt-4 pb-2 text-sm font-semibold">Source Quality · YTD</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground border-b" style={{ borderColor: "hsl(var(--card-border))" }}>
+                <th className="text-left font-medium py-3 px-5">Source</th>
+                <th className="text-right font-medium py-3 px-4">Gross</th>
+                <th className="text-right font-medium py-3 px-4">Net</th>
+                <th className="text-right font-medium py-3 px-4">Net %</th>
+                <th className="text-right font-medium py-3 px-4 hidden sm:table-cell">Active Listing</th>
+                <th className="text-right font-medium py-3 px-4 hidden sm:table-cell">No Comps/Fit</th>
+                <th className="text-right font-medium py-3 px-4 hidden md:table-cell">Out of Box</th>
+                <th className="text-right font-medium py-3 px-4 hidden md:table-cell">No Reply</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topSources.map((s) => (
+                <tr key={s.source} className="border-b last:border-b-0 hover:bg-muted/20" style={{ borderColor: "hsl(var(--card-border))" }}>
+                  <td className="py-2.5 px-5 font-medium">{s.source}</td>
+                  <td className="text-right num py-2.5 px-4">{s.grossLead.toLocaleString()}</td>
+                  <td className="text-right num py-2.5 px-4">{s.netLead.toLocaleString()}</td>
+                  <td className="text-right num py-2.5 px-4 font-semibold">{fmtPct(s.netToGrossPct / 100, 0)}</td>
+                  <td className="text-right num py-2.5 px-4 text-muted-foreground hidden sm:table-cell">{s.activeListing.toLocaleString()}</td>
+                  <td className="text-right num py-2.5 px-4 text-muted-foreground hidden sm:table-cell">{s.noCompsOrFit.toLocaleString()}</td>
+                  <td className="text-right num py-2.5 px-4 text-muted-foreground hidden md:table-cell">{s.outOfBuyBox.toLocaleString()}</td>
+                  <td className="text-right num py-2.5 px-4 text-muted-foreground hidden md:table-cell">{s.noReply.toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </Section>
   );
 }
