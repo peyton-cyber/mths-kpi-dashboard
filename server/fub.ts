@@ -70,9 +70,21 @@ export type DispoFubData = {
   error?: string;
 };
 
+// FUB user-name keywords that identify the dispo-side owner of a deal.
+// Verified against live FUB data (May 2026): the dispo team in FUB is
+// Jeff Davidson, Klint Ruud, Kalyn Kratzer, Jonathan Medlin (TC support),
+// plus Joseph Hooper and Jeb Burchett who were originally listed but
+// don't show up in many recent deal user arrays. Including all known
+// dispo names so the picker prefers them over AQ reps.
 const DISPO_TEAM_KEYWORDS = [
-  "joseph", "jeb", "jordan", "trey", "kalyn", // dispo + leadership commonly attributed
+  "joseph", "jeb", "jeff davidson", "klint", "jordan",
 ];
+
+/** Realistic assignment-fee bounds. customAssignedPrice in FUB is sometimes
+ *  the property sale price ($150K+) and sometimes the actual assignment fee
+ *  ($1K-$80K). Cap the average calculation to fee-range values. */
+const MIN_FEE = 500;
+const MAX_FEE = 100_000;
 
 async function fetchAllPagesForPipeline(apiKey: string, pipelineId: number, signal?: AbortSignal): Promise<FubDeal[]> {
   const all: FubDeal[] = [];
@@ -203,7 +215,10 @@ export async function fetchDispoFubData(apiKey: string): Promise<DispoFubData> {
       } else {
         cur.active++;
       }
-      cur.assignedRev += parseMoney(deal.customAssignedPrice ?? deal.price);
+      const feeCandidate = parseMoney(deal.customAssignedPrice);
+      if (feeCandidate >= MIN_FEE && feeCandidate <= MAX_FEE) {
+        cur.assignedRev += feeCandidate;
+      }
       ownerMap.set(owner, cur);
     }
 
@@ -226,8 +241,8 @@ export async function fetchDispoFubData(apiKey: string): Promise<DispoFubData> {
       if (isNaN(dt) || dt < cutoff) continue;
       const wk = isoWeekStart(dateStr);
       if (!wk) continue;
-      const price = parseMoney(deal.customAssignedPrice ?? deal.price);
-      if (price <= 0) continue;
+      const price = parseMoney(deal.customAssignedPrice);
+      if (price < MIN_FEE || price > MAX_FEE) continue;
       const cur = weekMap.get(wk) || { total: 0, count: 0 };
       cur.total += price;
       cur.count++;
@@ -237,7 +252,8 @@ export async function fetchDispoFubData(apiKey: string): Promise<DispoFubData> {
       .map(([weekStart, s]) => ({ weekStart, total: s.total, count: s.count }))
       .sort((a, b) => a.weekStart.localeCompare(b.weekStart));
 
-    // Avg assignment per deal — last 30 days
+    // Avg assignment FEE per deal — last 30 days. Filter to plausible fee range
+    // (FUB customAssignedPrice is sometimes mistakenly the sale price).
     const cutoff30 = Date.now() - 30 * 24 * 3600 * 1000;
     let recentSum = 0, recentCount = 0;
     for (const deal of dispoDeals) {
@@ -245,8 +261,8 @@ export async function fetchDispoFubData(apiKey: string): Promise<DispoFubData> {
       if (!dateStr) continue;
       const dt = new Date(dateStr).getTime();
       if (isNaN(dt) || dt < cutoff30) continue;
-      const price = parseMoney(deal.customAssignedPrice ?? deal.price);
-      if (price <= 0) continue;
+      const price = parseMoney(deal.customAssignedPrice);
+      if (price < MIN_FEE || price > MAX_FEE) continue; // skip invalid / sale-price entries
       recentSum += price;
       recentCount++;
     }
