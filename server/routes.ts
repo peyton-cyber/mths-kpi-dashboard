@@ -347,10 +347,10 @@ export async function registerRoutes(
         res.status(503).json({ error: "No data available yet" });
         return;
       }
-      const f = data.financials || {};
-      const fub = data.dispoFub || {};
-      const mc = data.mailchimp || {};
-      const wm = data.weeklyMarketing || {};
+      const ytd = (data as any).ytd || {};
+      const fub = data.dispoFub || ({} as any);
+      const mc = data.mailchimp || ({} as any);
+      const wm = data.weeklyMarketing || ({} as any);
       const last4Weeks = (wm.byWeek || []).slice(-4);
       const last4Gross = last4Weeks.reduce((s: number, w: any) => s + (w.grossLead || 0), 0);
       const last4Net = last4Weeks.reduce((s: number, w: any) => s + (w.netLead || 0), 0);
@@ -362,10 +362,11 @@ export async function registerRoutes(
       const lines: string[] = [];
       lines.push(`*MTHS Weekly KPI Digest · ${new Date().toLocaleDateString("en-US", { dateStyle: "medium" })}*`);
       lines.push("");
-      lines.push("*Revenue*");
-      lines.push(`• YTD Revenue: ${fmt$(f.ytd_revenue || 0)}`);
-      lines.push(`• Closed deals: ${f.ytd_closed_deals || 0}`);
-      lines.push(`• Active contracts: ${f.ytd_active_contracts || 0}`);
+      lines.push("*Revenue · YTD*");
+      lines.push(`• Revenue: ${fmt$(ytd.revenue || 0)}`);
+      lines.push(`• Closed deals: ${ytd.closed_deals || 0}`);
+      lines.push(`• Contracts: ${ytd.contracts || 0}`);
+      lines.push(`• Marketing spend: ${fmt$(ytd.marketing_spend || 0)}`);
       lines.push("");
       lines.push("*Dispo Pipeline (FUB live)*");
       lines.push(`• Active: ${fub.totalActiveDispo || 0} · Closed: ${fub.totalClosedDispo || 0} · Dropped: ${fub.totalDropped || 0}`);
