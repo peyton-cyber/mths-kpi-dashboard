@@ -567,11 +567,19 @@ export default function Overview() {
       <Section title={periodSectionTitle}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {(() => {
-            const contractsStatus =
-              effectivePeriod === "year"    ? statusFromTarget(pipe.contracts, salesMonthly.goals.contracts * MONTHS.length) :
-              effectivePeriod === "month"   ? statusFromTarget(pipe.contracts, salesMonthly.goals.contracts) :
-              effectivePeriod === "quarter" ? statusFromTarget(pipe.contracts, salesMonthly.goals.contracts * 3) :
+            // Contracts: pace-projected against the period-appropriate target.
+            // For weekly/daily slices we don't have a meaningful contracts target,
+            // so we keep them un-paced (no dot) rather than show a misleading red.
+            const contractsTarget =
+              effectivePeriod === "year"    ? salesMonthly.goals.contracts * MONTHS.length :
+              effectivePeriod === "month"   ? salesMonthly.goals.contracts :
+              effectivePeriod === "quarter" ? salesMonthly.goals.contracts * 3 :
               undefined;
+            const contractsPace = contractsTarget !== undefined ? {
+              numericValue: pipe.contracts,
+              target: contractsTarget,
+              period: effectivePeriod as any,
+            } : undefined;
             const profitStatus = statusFromTarget(pipe.profitPerDeal, salesMonthly.goals.profit_per_deal);
             return (
               <>
@@ -579,9 +587,8 @@ export default function Overview() {
                   label="Contracts Signed"
                   value={periodKpis.contracts}
                   sub={periodKpis.contractsSub}
-                  status={contractsStatus}
+                  pace={contractsPace}
                   tooltip={KPI_NOTES.contracts}
-                  pulse={contractsStatus === "red"}
                   size="lg"
                 />
                 <Scorecard

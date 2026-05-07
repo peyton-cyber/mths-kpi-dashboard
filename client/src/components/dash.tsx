@@ -3,6 +3,7 @@ import { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { StoplightStatus } from "@/lib/data";
 import { ArrowUp, ArrowDown } from "lucide-react";
+import { pacingStatus, type PacePeriod } from "@/lib/pacing";
 
 export function Section({
   title,
@@ -116,6 +117,47 @@ export function StoplightBadge({
   );
 }
 
+export interface PaceProps {
+  /** Numeric current value for the period */
+  numericValue: number;
+  /** Full-period target */
+  target: number;
+  /** Period the target applies to (e.g. "month" for monthly contracts) */
+  period: PacePeriod;
+}
+
+/**
+ * Compact "On Pace / Behind Pace / Off Pace" caption.
+ * Color-matches the underlying status so it visually echoes the stoplight dot.
+ */
+export function PaceBadge({
+  numericValue,
+  target,
+  period,
+  className,
+}: PaceProps & { className?: string }) {
+  const result = pacingStatus({ value: numericValue, target, period });
+  const cls =
+    result.status === "green"
+      ? "text-status-green"
+      : result.status === "yellow"
+        ? "text-status-yellow"
+        : "text-status-red";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide",
+        cls,
+        className,
+      )}
+      title={`Projected ${result.projected.toLocaleString()} of ${target.toLocaleString()} target (${result.percentOfPace}% of pace)`}
+    >
+      <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
+      {result.label}
+    </span>
+  );
+}
+
 export function Scorecard({
   label,
   value,
@@ -127,6 +169,7 @@ export function Scorecard({
   className,
   tooltip,
   pulse,
+  pace,
 }: {
   label: string;
   value: string | number;
@@ -140,6 +183,12 @@ export function Scorecard({
   tooltip?: string;
   /** When true, applies the persistent-red pulsing alert ring */
   pulse?: boolean;
+  /**
+   * If provided, the dot color and any caption are derived from pace projection
+   * instead of the raw `status` prop. Use for any KPI tied to a period target
+   * (monthly contracts, quarterly revenue, etc.) so partial periods don't burn red.
+   */
+  pace?: PaceProps;
 }) {
   const valueClass = {
     sm: "text-xl",
@@ -165,7 +214,17 @@ export function Scorecard({
               </span>
             )}
           </div>
-          {status && <StoplightDot status={status} />}
+          {pace ? (
+            <StoplightDot
+              status={pacingStatus({
+                value: pace.numericValue,
+                target: pace.target,
+                period: pace.period,
+              }).status}
+            />
+          ) : (
+            status && <StoplightDot status={status} />
+          )}
         </div>
       </div>
       <div className="px-4 pb-3 pt-1">
@@ -178,6 +237,11 @@ export function Scorecard({
         >
           {value}
         </div>
+        {pace && (
+          <div className="mt-1">
+            <PaceBadge numericValue={pace.numericValue} target={pace.target} period={pace.period} />
+          </div>
+        )}
         {(sub || trend) && (
           <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
             {trend && (

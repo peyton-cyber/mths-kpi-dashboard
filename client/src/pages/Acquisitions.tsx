@@ -11,6 +11,7 @@ import {
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
 import { useKpi } from "@/components/KpiDataProvider";
 import { AlertBanner } from "@/components/AlertBanner";
+import { LiveFieldActivity } from "@/components/LiveFieldActivity";
 import {
   fmtPct,
   fmtMoney,
@@ -266,6 +267,9 @@ export default function Acquisitions() {
 
       <AlertBanner filterPersons={["Korbin", "TJ", "Ryan", "Brandon", "Jeff", "Jonathan"]} />
 
+      {/* Live AQ field activity — map + windshield time. Stub data until Bouncie is wired. */}
+      <LiveFieldActivity data={(data as any)?.fieldActivity} />
+
       {isFallback && (
         <div className="rounded-lg border border-status-yellow/40 bg-status-yellow/5 px-4 py-2.5 text-[13px] text-muted-foreground">
           No data available for the selected period — showing latest month ({latestMonth}) data.
@@ -279,28 +283,28 @@ export default function Acquisitions() {
             label="Gross Leads"
             value={pipe.grossLeads}
             sub={`Target ${grossLeadsGoal} · ${dispLabel}`}
-            status={statusFromTarget(pipe.grossLeads, grossLeadsGoal)}
+            pace={{ numericValue: pipe.grossLeads, target: grossLeadsGoal, period: effectivePeriod as any }}
             size="lg"
           />
           <Scorecard
             label="Net Leads"
             value={pipe.netLeads}
             sub={`Target ${netLeadsGoal} · ${dispLabel}`}
-            status={statusFromTarget(pipe.netLeads, netLeadsGoal)}
+            pace={{ numericValue: pipe.netLeads, target: netLeadsGoal, period: effectivePeriod as any }}
             size="lg"
           />
           <Scorecard
             label="Appts Scheduled"
             value={pipe.apptsSet}
             sub={`Target ${apptsSetGoal} · ${dispLabel}`}
-            status={statusFromTarget(pipe.apptsSet, apptsSetGoal)}
+            pace={{ numericValue: pipe.apptsSet, target: apptsSetGoal, period: effectivePeriod as any }}
             size="lg"
           />
           <Scorecard
             label="Appts Attended"
             value={pipe.apptsExecuted}
             sub={`Target ${apptsExecGoal} · ${dispLabel}`}
-            status={statusFromTarget(pipe.apptsExecuted, apptsExecGoal)}
+            pace={{ numericValue: pipe.apptsExecuted, target: apptsExecGoal, period: effectivePeriod as any }}
             size="lg"
           />
         </div>
