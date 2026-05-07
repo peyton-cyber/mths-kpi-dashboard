@@ -99,6 +99,40 @@ export default function Acquisitions() {
   const apptsSetGoal    = Math.round(salesMonthly.goals.appts_set    * mult);
   const apptsExecGoal   = Math.round(salesMonthly.goals.appts_executed * mult);
 
+  // Per-period "effective target" used by pace dots. Returns 0 when the
+  // current period has no explicit target in the sheet — the dot is then
+  // rendered as muted gray ("No Target") instead of falsely going red.
+  // Source: backend `salesMonthly.monthlyGoals[metric][month]` (number | null).
+  const monthlyGoals: Record<string, Record<string, number | null>> | undefined =
+    (salesMonthly as any).monthlyGoals;
+  function paceTarget(metricKey: string, fullPeriodGoal: number): number {
+    // No per-month map yet (older API) — fall back to scaled goal.
+    if (!monthlyGoals || !monthlyGoals[metricKey]) return fullPeriodGoal;
+    const map = monthlyGoals[metricKey];
+    if (effectivePeriod === "month" || effectivePeriod === "week" || effectivePeriod === "day") {
+      const t = map[latestMonth];
+      if (t == null) return 0; // suppress pace dot — no target set
+      // For sub-month periods, scale the monthly target proportionally.
+      return Math.round(t * mult);
+    }
+    if (effectivePeriod === "quarter") {
+      const qm = currentQuarterMonths(MONTHS);
+      let sum = 0; let any = false;
+      for (const m of qm) { const t = map[m]; if (t != null) { sum += t; any = true; } }
+      return any ? sum : 0;
+    }
+    if (effectivePeriod === "year") {
+      let sum = 0; let any = false;
+      for (const m of MONTHS) { const t = map[m]; if (t != null) { sum += t; any = true; } }
+      return any ? sum : 0;
+    }
+    return fullPeriodGoal;
+  }
+  const grossLeadsPaceTgt = paceTarget("gross_leads",    grossLeadsGoal);
+  const netLeadsPaceTgt   = paceTarget("net_leads",      netLeadsGoal);
+  const apptsSetPaceTgt   = paceTarget("appts_set",      apptsSetGoal);
+  const apptsExecPaceTgt  = paceTarget("appts_executed", apptsExecGoal);
+
   // Funnel chart data
   const monthFunnel = [
     { stage: "Gross Leads",    value: salesMonthly.gross_leads[latestMonth]    ?? 0, goal: salesMonthly.goals.gross_leads },
@@ -283,28 +317,28 @@ export default function Acquisitions() {
             label="Gross Leads"
             value={pipe.grossLeads}
             sub={`Target ${grossLeadsGoal} · ${dispLabel}`}
-            pace={{ numericValue: pipe.grossLeads, target: grossLeadsGoal, period: effectivePeriod as any }}
+            pace={{ numericValue: pipe.grossLeads, target: grossLeadsPaceTgt, period: effectivePeriod as any }}
             size="lg"
           />
           <Scorecard
             label="Net Leads"
             value={pipe.netLeads}
             sub={`Target ${netLeadsGoal} · ${dispLabel}`}
-            pace={{ numericValue: pipe.netLeads, target: netLeadsGoal, period: effectivePeriod as any }}
+            pace={{ numericValue: pipe.netLeads, target: netLeadsPaceTgt, period: effectivePeriod as any }}
             size="lg"
           />
           <Scorecard
             label="Appts Scheduled"
             value={pipe.apptsSet}
             sub={`Target ${apptsSetGoal} · ${dispLabel}`}
-            pace={{ numericValue: pipe.apptsSet, target: apptsSetGoal, period: effectivePeriod as any }}
+            pace={{ numericValue: pipe.apptsSet, target: apptsSetPaceTgt, period: effectivePeriod as any }}
             size="lg"
           />
           <Scorecard
             label="Appts Attended"
             value={pipe.apptsExecuted}
             sub={`Target ${apptsExecGoal} · ${dispLabel}`}
-            pace={{ numericValue: pipe.apptsExecuted, target: apptsExecGoal, period: effectivePeriod as any }}
+            pace={{ numericValue: pipe.apptsExecuted, target: apptsExecPaceTgt, period: effectivePeriod as any }}
             size="lg"
           />
         </div>

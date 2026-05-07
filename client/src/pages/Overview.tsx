@@ -570,11 +570,36 @@ export default function Overview() {
             // Contracts: pace-projected against the period-appropriate target.
             // For weekly/daily slices we don't have a meaningful contracts target,
             // so we keep them un-paced (no dot) rather than show a misleading red.
-            const contractsTarget =
-              effectivePeriod === "year"    ? salesMonthly.goals.contracts * MONTHS.length :
-              effectivePeriod === "month"   ? salesMonthly.goals.contracts :
-              effectivePeriod === "quarter" ? salesMonthly.goals.contracts * 3 :
-              undefined;
+            // Prefer per-month targets (`monthlyGoals.contracts[month]`) when
+            // available — a `null` value means no target was set for that month
+            // and we pass target=0 so the dot renders muted gray ("No Target").
+            const cMonthly: Record<string, number | null> | undefined =
+              (salesMonthly as any).monthlyGoals?.contracts;
+            let contractsTarget: number | undefined;
+            if (effectivePeriod === "month") {
+              if (cMonthly) {
+                const t = cMonthly[latestMonth];
+                contractsTarget = t == null ? 0 : t;
+              } else {
+                contractsTarget = salesMonthly.goals.contracts;
+              }
+            } else if (effectivePeriod === "quarter") {
+              if (cMonthly) {
+                let sum = 0; let any = false;
+                for (const m of MONTHS.slice(-3)) { const t = cMonthly[m]; if (t != null) { sum += t; any = true; } }
+                contractsTarget = any ? sum : 0;
+              } else {
+                contractsTarget = salesMonthly.goals.contracts * 3;
+              }
+            } else if (effectivePeriod === "year") {
+              if (cMonthly) {
+                let sum = 0; let any = false;
+                for (const m of MONTHS) { const t = cMonthly[m]; if (t != null) { sum += t; any = true; } }
+                contractsTarget = any ? sum : 0;
+              } else {
+                contractsTarget = salesMonthly.goals.contracts * MONTHS.length;
+              }
+            }
             const contractsPace = contractsTarget !== undefined ? {
               numericValue: pipe.contracts,
               target: contractsTarget,

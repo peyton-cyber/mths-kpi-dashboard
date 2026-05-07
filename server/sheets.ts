@@ -455,14 +455,20 @@ export async function fetchAllKpiData() {
   }
 
   // Goals — Q2 targets from sheet (updated dynamically when possible)
-  // Parse goals from row names like "Gross Leads (Goal 312 for Apr)"
-  function parseGoalFromRowName(rowName: string): number | null {
+  // Parse goals from row names like "Gross Leads (Goal 312 for Apr)".
+  // Also extract the month tag ("for Apr") so we know which month the goal applies to.
+  function parseGoalFromRowName(rowName: string): { value: number; month: string | null } | null {
     const m = rowName.match(/Goal\s+\$?([\d,.kKmM]+)/i);
     if (!m) return null;
     let val = m[1].replace(/,/g, '');
     if (val.toLowerCase().endsWith('k')) val = String(parseFloat(val) * 1000);
     if (val.toLowerCase().endsWith('m')) val = String(parseFloat(val) * 1000000);
-    return parseFloat(val) || null;
+    const value = parseFloat(val);
+    if (!value || isNaN(value)) return null;
+    // Look for "for Apr" / "for May" / etc. (3-letter month abbreviations)
+    const monthMatch = rowName.match(/for\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b/i);
+    const month = monthMatch ? (monthMatch[1].charAt(0).toUpperCase() + monthMatch[1].slice(1, 3).toLowerCase()) : null;
+    return { value, month };
   }
 
   // Extract goals from actual row names in the sheet
@@ -474,19 +480,69 @@ export async function fetchAllKpiData() {
   const apptsExecRowName = Object.keys(metricLookup).find(k => k.toLowerCase().startsWith('appts executed'));
   const contractsRowName = Object.keys(metricLookup).find(k => k.toLowerCase().startsWith('contracts') && !k.includes('Dropped') && !k.includes('Conversion'));
 
+  // Helper that returns just the goal value (preserves prior `goals` shape)
+  const gv = (rn: string | undefined): number | null => {
+    if (!rn) return null;
+    const parsed = parseGoalFromRowName(rn);
+    return parsed ? parsed.value : null;
+  };
   const goals = {
-    gross_leads: (grossRowName ? parseGoalFromRowName(grossRowName) : null) ?? 312,
-    net_leads: (netRowName ? parseGoalFromRowName(netRowName) : null) ?? 172,
-    appts_set: (apptsSetRowName ? parseGoalFromRowName(apptsSetRowName) : null) ?? 120,
-    appts_executed: (apptsExecRowName ? parseGoalFromRowName(apptsExecRowName) : null) ?? 105,
-    contracts: (contractsRowName ? parseGoalFromRowName(contractsRowName) : null) ?? 25,
-    revenue: (revRowName ? parseGoalFromRowName(revRowName) : null) ?? 550000,
+    gross_leads: gv(grossRowName) ?? 312,
+    net_leads: gv(netRowName) ?? 172,
+    appts_set: gv(apptsSetRowName) ?? 120,
+    appts_executed: gv(apptsExecRowName) ?? 105,
+    contracts: gv(contractsRowName) ?? 25,
+    revenue: gv(revRowName) ?? 550000,
     cost_per_appt: 1200,
     appt_to_contract: 0.28,
-    profit_per_deal: (profitRowName ? parseGoalFromRowName(profitRowName) : null) ?? 25000,
+    profit_per_deal: gv(profitRowName) ?? 25000,
     dropped_contracts: 2,
   };
   console.log(`[sheets] Goals parsed: rev=$${goals.revenue.toLocaleString()}, gross=${goals.gross_leads}, contracts=${goals.contracts}`);
+
+  // ================================================================
+  // PER-MONTH TARGETS (Phase 7.1)
+  // The sheet flags each goal with the month it applies to ("Goal 312 for Apr").
+  // Build a per-metric → per-month map. Months without an explicit target are
+  // emitted as `null`, so the frontend can suppress the pace dot for that period
+  // instead of falsely flagging it red.
+  // ================================================================
+  const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  type MetricMonthlyGoals = Record<string, number | null>;
+  function buildMonthlyForMetric(rowName: string | undefined): MetricMonthlyGoals {
+    const out: MetricMonthlyGoals = Object.fromEntries(SHORT_MONTHS.map(m => [m, null]));
+    if (!rowName) return out;
+    const parsed = parseGoalFromRowName(rowName);
+    if (!parsed) return out;
+    if (parsed.month) {
+      // Goal explicitly tagged for this month — only set that month
+      out[parsed.month] = parsed.value;
+    } else {
+      // No month tag — treat goal as applying to the current month and earlier
+      // ones that have actuals. We do NOT assume future months share the goal
+      // (user's rule: "Hide pace dots until target is set").
+      const curIdx = _now.getMonth(); // 0..11
+      for (let i = 0; i <= curIdx; i++) out[SHORT_MONTHS[i]] = parsed.value;
+    }
+    return out;
+  }
+  const monthlyGoals: Record<string, MetricMonthlyGoals> = {
+    gross_leads:    buildMonthlyForMetric(grossRowName),
+    net_leads:      buildMonthlyForMetric(netRowName),
+    appts_set:      buildMonthlyForMetric(apptsSetRowName),
+    appts_executed: buildMonthlyForMetric(apptsExecRowName),
+    contracts:      buildMonthlyForMetric(contractsRowName),
+    profit_per_deal: buildMonthlyForMetric(profitRowName),
+    // Revenue uses dedicated monthlyRevenueGoals built below, but seed here so the
+    // frontend doesn't choke if it expects the key to exist.
+    revenue:        Object.fromEntries(SHORT_MONTHS.map(m => [m, null])) as MetricMonthlyGoals,
+  };
+  const goalsByMonthLog = SHORT_MONTHS.map(m => {
+    const set = (Object.keys(monthlyGoals) as Array<keyof typeof monthlyGoals>)
+      .filter(k => monthlyGoals[k][m] !== null).length;
+    return `${m}:${set}`;
+  }).join(' ');
+  console.log(`[sheets] monthlyGoals defined per month (count of metrics with target): ${goalsByMonthLog}`);
 
   // ================================================================
   // PER-MONTH REVENUE GOALS — DYNAMIC FROM ASANA
@@ -1175,10 +1231,13 @@ export async function fetchAllKpiData() {
   // 5. MARKETING CHANNELS
   // ================================================================
   const mktg = sheets.mktg || { headers: [], rows: [], rowCount: 0 };
-  const channelRows = mktg.rows.filter(
-    (r) => r["Lead Funnels"] && r["Lead Funnels"].trim() !== "" &&
-      r["Lead Funnels"] !== "TOTALS" && r["ID"] && parseInt2(r["ID"]) > 0 && parseInt2(r["ID"]) <= 10
-  );
+  const channelRows = mktg.rows.filter((r) => {
+    const lf = String(r["Lead Funnels"] || "").trim();
+    if (!lf) return false;
+    // Skip any TOTALS-style row (e.g. "TOTALS - Marketing")
+    if (lf.toUpperCase().startsWith("TOTAL")) return false;
+    return r["ID"] && parseInt2(r["ID"]) > 0 && parseInt2(r["ID"]) <= 10;
+  });
   const marketingChannels = channelRows.map((r) => ({
     name: r["Lead Funnels"],
     spend: parseMoney(r["Cost"]),
@@ -1190,21 +1249,49 @@ export async function fetchAllKpiData() {
     revenue: parseMoney(r["Estimated Revenue"]),
     roas: r["ROAS"] ? parseFloat(r["ROAS"].replace("%", "").replace(/,/g, "")) / 100 : null,
   }));
-  const totalsRow = mktg.rows.find((r) => r["Lead Funnels"] === "TOTALS");
+  // Marketing TOTALS row — match anything starting with "TOTAL" (e.g. "TOTALS - Marketing ")
+  const totalsRow = mktg.rows.find((r) => {
+    const lf = String(r["Lead Funnels"] || "").trim().toUpperCase();
+    return lf.startsWith("TOTAL");
+  });
+  // Sum from per-channel rows. Always preferred when non-zero — the TOTALS row
+  // sometimes carries blank/zero derived fields even when individual channel
+  // rows have valid data.
+  const sumSpend = marketingChannels.reduce((s, c) => s + (c.spend || 0), 0);
+  const sumGross = marketingChannels.reduce((s, c) => s + (c.gross_leads || 0), 0);
+  const sumNet   = marketingChannels.reduce((s, c) => s + (c.net_leads   || 0), 0);
+  const sumDeals = marketingChannels.reduce((s, c) => s + (c.deals      || 0), 0);
+  const sumRev   = marketingChannels.reduce((s, c) => s + (c.revenue    || 0), 0);
+
   const marketingTotals = {
-    spend: totalsRow ? parseMoney(totalsRow["Cost"]) : marketingChannels.reduce((s, c) => s + c.spend, 0),
-    gross_leads: totalsRow ? parseInt2(totalsRow["Gross Leads"]) : marketingChannels.reduce((s, c) => s + c.gross_leads, 0),
-    net_leads: totalsRow ? parseInt2(totalsRow["Net Leads"]) : marketingChannels.reduce((s, c) => s + c.net_leads, 0),
-    deals: totalsRow ? parseInt2(totalsRow["Deals"]) : marketingChannels.reduce((s, c) => s + c.deals, 0),
-    conversion: totalsRow ? (parsePct(totalsRow["Conversion Rate %"]) ?? 0) : 0,
-    cost_per_deal: totalsRow ? parseMoney(totalsRow["Cost Per Deal"]) : 0,
-    revenue: totalsRow ? parseMoney(totalsRow["Estimated Revenue"]) : marketingChannels.reduce((s, c) => s + c.revenue, 0),
-    roas: 0 as number, // calculated below
+    spend:        sumSpend > 0 ? sumSpend : (totalsRow ? parseMoney(totalsRow["Cost"])              : 0),
+    gross_leads:  sumGross > 0 ? sumGross : (totalsRow ? parseInt2(totalsRow["Gross Leads"])         : 0),
+    net_leads:    sumNet   > 0 ? sumNet   : (totalsRow ? parseInt2(totalsRow["Net Leads"])           : 0),
+    deals:        sumDeals > 0 ? sumDeals : (totalsRow ? parseInt2(totalsRow["Deals"])               : 0),
+    revenue:      sumRev   > 0 ? sumRev   : (totalsRow ? parseMoney(totalsRow["Estimated Revenue"])  : 0),
+    conversion: 0 as number,    // computed below
+    cost_per_deal: 0 as number, // computed below
+    roas: 0 as number,          // computed below
   };
-  // Calculate blended ROAS from totals (revenue / spend)
+  // Derive blended conversion / cost-per-deal / ROAS from the totals we just
+  // built. Recomputing avoids the bug where the TOTALS row in the sheet had
+  // empty Conversion% and Cost/Deal cells, which previously made the dashboard
+  // show 0.0% and $0 even though there were 67 deals on $409K spend.
+  marketingTotals.conversion = marketingTotals.net_leads > 0
+    ? marketingTotals.deals / marketingTotals.net_leads
+    : (totalsRow ? (parsePct(totalsRow["Conversion Rate %"]) ?? 0) : 0);
+  marketingTotals.cost_per_deal = marketingTotals.deals > 0
+    ? marketingTotals.spend / marketingTotals.deals
+    : (totalsRow ? parseMoney(totalsRow["Cost Per Deal"]) : 0);
   marketingTotals.roas = marketingTotals.spend > 0
     ? Math.round((marketingTotals.revenue / marketingTotals.spend) * 100) / 100
     : 0;
+  console.log(
+    `[sheets] marketingTotals: spend=$${marketingTotals.spend.toLocaleString()} `
+    + `net=${marketingTotals.net_leads} deals=${marketingTotals.deals} `
+    + `conv=${(marketingTotals.conversion*100).toFixed(1)}% `
+    + `cost/deal=$${marketingTotals.cost_per_deal.toFixed(0)} roas=${marketingTotals.roas}x`
+  );
 
   // ================================================================
   // YTD lead-count alignment (Phase 6 audit fix)
@@ -2464,7 +2551,7 @@ export async function fetchAllKpiData() {
   console.log(`[sheets] CCC: ${cccDeals.length} closed deals, ${recentDeals.length} last 12mo, avg lifecycle ${cccTotalRecent.avg}d (median ${cccTotalRecent.median}d)`);
 
   return {
-    salesMonthly: { ...salesMonthly, goals, monthlyRevenueGoals, monthlyGrossProfitGoals },
+    salesMonthly: { ...salesMonthly, goals, monthlyRevenueGoals, monthlyGrossProfitGoals, monthlyGoals },
     activeMonths,
     salesActiveMonths,
     ytd,

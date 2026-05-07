@@ -16,6 +16,8 @@
  */
 
 export type StoplightStatus = "green" | "yellow" | "red";
+/** Extended status type that includes a "neutral" / "no target" gray state. */
+export type PaceStatus = StoplightStatus | "neutral";
 export type PacePeriod = "day" | "week" | "month" | "quarter" | "year";
 
 export interface PaceInput {
@@ -38,7 +40,7 @@ export interface PaceInput {
 }
 
 export interface PaceResult {
-  status: StoplightStatus;
+  status: PaceStatus;
   /** Short human label: "On Pace", "Behind Pace", "Ahead of Pace" */
   label: string;
   /** Projected period-end value if current pace holds */
@@ -120,10 +122,12 @@ export function pacingStatus(input: PaceInput): PaceResult {
   const now = input.now ?? new Date();
   const periodElapsed = periodFractionElapsed(input.period, now, input.weekStartsOn);
 
-  // Special case: target is 0 or missing — don't render a misleading status
+  // Special case: target is 0 or missing — don't render a misleading status.
+  // Return "neutral" so the UI can render a muted/gray dot instead of yellow,
+  // and call out that there is no target set for this period.
   if (!input.target || input.target <= 0) {
     return {
-      status: "yellow",
+      status: "neutral",
       label: "No Target",
       projected: input.value,
       percentOfPace: 0,
@@ -166,6 +170,6 @@ export function pacingStatus(input: PaceInput): PaceResult {
 /**
  * Convenience: get just the status color from a value/target/period combo.
  */
-export function pacingColor(value: number, target: number, period: PacePeriod): StoplightStatus {
+export function pacingColor(value: number, target: number, period: PacePeriod): PaceStatus {
   return pacingStatus({ value, target, period }).status;
 }

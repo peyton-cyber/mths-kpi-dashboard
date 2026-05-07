@@ -142,7 +142,13 @@ export function PaceBadge({
       ? "text-status-green"
       : result.status === "yellow"
         ? "text-status-yellow"
-        : "text-status-red";
+        : result.status === "red"
+          ? "text-status-red"
+          : "text-muted-foreground"; // neutral / no target
+  const title =
+    result.status === "neutral"
+      ? "No target set for this period"
+      : `Projected ${result.projected.toLocaleString()} of ${target.toLocaleString()} target (${result.percentOfPace}% of pace)`;
   return (
     <span
       className={cn(
@@ -150,7 +156,7 @@ export function PaceBadge({
         cls,
         className,
       )}
-      title={`Projected ${result.projected.toLocaleString()} of ${target.toLocaleString()} target (${result.percentOfPace}% of pace)`}
+      title={title}
     >
       <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
       {result.label}
@@ -214,15 +220,26 @@ export function Scorecard({
               </span>
             )}
           </div>
-          {pace ? (
-            <StoplightDot
-              status={pacingStatus({
-                value: pace.numericValue,
-                target: pace.target,
-                period: pace.period,
-              }).status}
-            />
-          ) : (
+          {pace ? (() => {
+            // When a metric has no target for the current period, render a muted
+            // gray dot instead of red/yellow — reds should only appear when
+            // we're meaningfully behind a real target.
+            const paceResult = pacingStatus({
+              value: pace.numericValue,
+              target: pace.target,
+              period: pace.period,
+            });
+            if (paceResult.status === "neutral") {
+              return (
+                <span
+                  aria-label="No target set"
+                  title="No target set for this period"
+                  className="inline-block h-2.5 w-2.5 rounded-full bg-muted-foreground/40"
+                />
+              );
+            }
+            return <StoplightDot status={paceResult.status} />;
+          })() : (
             status && <StoplightDot status={status} />
           )}
         </div>
