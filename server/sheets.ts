@@ -13,6 +13,7 @@ import {
   type SheetResponse as ClientSheetResponse,
 } from "./google-sheets-client";
 import { fetchDispoFubData, type DispoFubData } from "./fub";
+import { fetchAcqFubData, type AcqFubData, AQ_REPS } from "./fub-acquisitions";
 import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
 import { fetchWeeklyMarketingData, type WeeklyMarketingData } from "./weeklyMarketing";
 
@@ -260,7 +261,7 @@ export async function fetchAllKpiData() {
   console.log(`[sheets] RISE tabs (auto): current="${currentRiseTab}", prev="${prevRiseTab}"`);
 
   // Fetch sheets, Asana sprint goals, FUB dispo data, Mailchimp, and Weekly Marketing in parallel
-  const [sheets, sprintGoalsList, dispoFub, mailchimp, weeklyMarketing] = await Promise.all([
+  const [sheets, sprintGoalsList, dispoFub, mailchimp, weeklyMarketing, acqFub] = await Promise.all([
     fetchSheetsParallel([
       { label: "mktg", spreadsheetId: MASTER_KPIS, sheetName: "Marketing 2026 KPIs" },
       { label: "deals", spreadsheetId: MASTER_KPIS, sheetName: "TOP 10 DEALS" },
@@ -328,6 +329,23 @@ export async function fetchAllKpiData() {
         error: `weeklyMarketing fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
       };
     }),
+    fetchAcqFubData(process.env.FUB_API_KEY || "", 30).catch((e): AcqFubData => {
+      console.error(`[fub-acq] fetch failed: ${(e?.message || "").slice(0, 200)}`);
+      return {
+        windowDays: 30,
+        reps: AQ_REPS.map(r => ({
+          agent: r.canonical,
+          apptsSet: 0, apptsExecuted: 0, apptsCancelled: 0,
+          callCount: 0, talkTimeMin: 0,
+          contracts: 0, offersMade: 0,
+          hotLeads: 0, newLeads: 0,
+        })),
+        totals: { apptsSet: 0, apptsExecuted: 0, callCount: 0, talkTimeMin: 0, contracts: 0, offersMade: 0 },
+        fetchedAt: new Date().toISOString(),
+        source: "fub",
+        error: `FUB acq fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
+      };
+    }),
   ]);
   if (weeklyMarketing.error) {
     console.warn(`[weeklyMarketing] returned error: ${weeklyMarketing.error}`);
@@ -338,6 +356,11 @@ export async function fetchAllKpiData() {
     console.warn(`[fub] dispo data returned error: ${dispoFub.error}`);
   } else {
     console.log(`[fub] dispo: ${dispoFub.totalActiveDispo} active, ${dispoFub.totalClosedDispo} closed, ${dispoFub.totalDropped} dropped, ${dispoFub.byOwner.length} owners`);
+  }
+  if (acqFub.error) {
+    console.warn(`[fub-acq] returned error: ${acqFub.error}`);
+  } else {
+    console.log(`[fub-acq] ${acqFub.reps.length} reps, totals: ${acqFub.totals.apptsSet} appts set, ${acqFub.totals.callCount} calls, ${acqFub.totals.talkTimeMin.toFixed(0)} talk min, ${acqFub.totals.contracts} contracts`);
   }
   if (mailchimp.error) {
     console.warn(`[mailchimp] returned error: ${mailchimp.error}`);
@@ -2407,10 +2430,62 @@ export async function fetchAllKpiData() {
       a.avgApptsSet    = Math.round((a.apptsSet / a.days) * 10) / 10;
     }
   }
+  // PHASE 8: Overlay FUB-sourced AQ stats so reps with zero/missing sheet
+  // data still show real numbers. FUB is the live source of truth for the
+  // 6 reporting reps (Korbin, Brandon, Jeff H, TJ, Ryan, Jonathan); sheet
+  // remains source for windshield/drive-time which FUB doesn't track.
+  const acqRepsBySheet = new Map<string, AcqAgent>();
+  for (const a of Object.values(byAgent)) {
+    // Normalize sheet agent name to FUB canonical
+    const lower = a.agent.toLowerCase();
+    let canonical = a.agent;
+    if (lower.includes("korbin")) canonical = "Korbin";
+    else if (lower.includes("brandon")) canonical = "Brandon";
+    else if (lower.includes("jeff h") || lower.includes("jeff henry")) canonical = "Jeff H";
+    else if (lower.startsWith("tj")) canonical = "TJ";
+    else if (lower.includes("ryan")) canonical = "Ryan";
+    else if (lower.includes("jonathan") || lower.includes("johnathan")) canonical = "Jonathan";
+    acqRepsBySheet.set(canonical, { ...a, agent: canonical });
+  }
+
+  // Merge: prefer FUB data for the 6 reporting reps, keep sheet-only fields
+  // (drive/windshield time) where available.
+  const mergedAgents: AcqAgent[] = [];
+  for (const fubRep of acqFub.reps) {
+    const sheetRep = acqRepsBySheet.get(fubRep.agent);
+    const days = Math.max(sheetRep?.days || 0, acqFub.windowDays);
+    const merged: AcqAgent = {
+      agent: fubRep.agent,
+      days,
+      driveTime: sheetRep?.driveTime || 0,
+      windshieldTime: sheetRep?.windshieldTime || 0,
+      talkTime: Math.round(fubRep.talkTimeMin),
+      touchPoints: fubRep.callCount,
+      apptsSet: fubRep.apptsSet,
+      apptsAttended: fubRep.apptsExecuted,
+      offers: fubRep.offersMade,
+      contracts: fubRep.contracts,
+      avgTalkTime: days > 0 ? Math.round(fubRep.talkTimeMin / days) : 0,
+      avgTouchPoints: days > 0 ? Math.round(fubRep.callCount / days) : 0,
+      avgApptsSet: days > 0 ? Math.round((fubRep.apptsSet / days) * 10) / 10 : 0,
+      target: acqTargetByAgent[fubRep.agent] || acqTargetByAgent[sheetRep?.agent || ""],
+    };
+    mergedAgents.push(merged);
+  }
+  // Include any sheet agents that aren't in the FUB 6-rep list (e.g. legacy)
+  for (const [canonical, a] of acqRepsBySheet.entries()) {
+    if (!mergedAgents.find(m => m.agent === canonical)) {
+      mergedAgents.push(a);
+    }
+  }
+
   const acquisitionsActivity = {
-    windowDays: 90,
-    agents: Object.values(byAgent).sort((x, y) => y.contracts - x.contracts || y.apptsSet - x.apptsSet),
+    windowDays: acqFub.windowDays,
+    agents: mergedAgents.sort((x, y) => y.contracts - x.contracts || y.apptsSet - x.apptsSet),
     rowCount: acqActivityRows.length,
+    source: acqFub.error ? "sheet" : "fub",
+    fubError: acqFub.error,
+    fetchedAt: acqFub.fetchedAt,
   };
 
   // ---------- Marketing Spend & ROAS (per-agent monthly) ----------
