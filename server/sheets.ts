@@ -675,7 +675,10 @@ export async function fetchAllKpiData() {
   const perAgentDealCountByMonth: Record<string, Record<string, number>> = {};
   // Marketing source totals: { "FB Ads" → { gross, dealCount, perAgent: { Korbin: gross, ... } } }
   const marketingSourceRollup: Record<string, { gross: number; dealCount: number; perAgent: Record<string, number> }> = {};
-  const personCols = ["Korbin ", "Brandon ", "Jeff Henry", "TJ", "Ryan Craig",
+  // NOTE: Sheet headers in the Rev Tracker have leading/trailing whitespace
+  // ("Korbin ", " Gross Revenue ", etc.) but the fetcher trims all headers,
+  // so these keys MUST be the trimmed forms.
+  const personCols = ["Korbin", "Brandon", "Jeff Henry", "TJ", "Ryan Craig",
     "Jonathan Medlin", "Jeff Davidson", "Joseph Hooper", "Jeb Burchett", "Kalyn", "Dana"];
 
   /** Extract marketing source from "UC in Jan - FB Ads" → "FB Ads". */
@@ -706,8 +709,8 @@ export async function fetchAllKpiData() {
   for (const row of revSheet.rows) {
     const deal = (row["Deal"] || "").trim();
     const closeDate = (row["Close Date"] || "").trim();
-    const gross = parseMoney(row[" Gross Revenue "]);
-    const tcFee = parseMoney(row[" TC Fee "]);
+    const gross = parseMoney(row["Gross Revenue"]);
+    const tcFee = parseMoney(row["TC Fee"]);
 
     // Track section for context ("January Actual", "February Actual", etc.)
     // Skip ALL summary/aggregate rows — we calculate our own totals
@@ -719,9 +722,8 @@ export async function fetchAllKpiData() {
     }
 
     // Skip summary rows (Commission, Total Rev, ROAS)
-    const cr = (row[" Commission Revenue "] || "").trim();
-    if (cr === "Commission" || cr === "Total Rev:" || cr === "ROAS Per:" ||
-        cr === " Commission " || cr === " Total Rev: " || cr === " ROAS Per: ") continue;
+    const cr = (row["Commission Revenue"] || "").trim();
+    if (cr === "Commission" || cr === "Total Rev:" || cr === "ROAS Per:") continue;
     if (!deal) continue;
 
     // Skip deals with no close date or "TBD" close date — these are projections
@@ -803,7 +805,7 @@ export async function fetchAllKpiData() {
     }
 
     // Marketing source rollup (column "Marketing Month + Source" or last column)
-    const sourceRaw = row["Marketing Month + Source"] || row[" Marketing Month + Source "] || "";
+    const sourceRaw = row["Marketing Month + Source"] || "";
     const source = parseMarketingSource(sourceRaw);
     if (source && gross > 0) {
       if (!marketingSourceRollup[source]) {
@@ -1764,7 +1766,7 @@ export async function fetchAllKpiData() {
   const projectedYearTotal = revSheet.rows.reduce((max, r) => {
     const deal = (r["Deal"] || "").trim();
     if (deal.includes("Projected Year Total") || deal.includes("Current Deals")) {
-      return parseMoney(r[" Gross Revenue "]);
+      return parseMoney(r["Gross Revenue"]);
     }
     return max;
   }, 0);
