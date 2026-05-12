@@ -2123,8 +2123,11 @@ export async function fetchAllKpiData() {
   // Helper: find best month in a Record<monthKey, number>
   // Only consider months that have already passed (not the current/future months)
   // so a partial-month or pre-entered future deal doesn't show up as a "record".
+  // Monthly aggregates currently come from current-year sheets only, so we tag
+  // the year onto the `when` label for clarity (e.g. "Feb 2026").
   const MONTHS_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const currentMonthIdx = _now.getMonth(); // 0..11
+  const currentYear = _now.getFullYear();
   function bestMonth(
     data: Record<string, number>,
     label: string,
@@ -2139,7 +2142,10 @@ export async function fetchAllKpiData() {
     });
     if (entries.length === 0) return null;
     const [bestKey, bestVal] = entries.reduce((best, cur) => (cur[1] > best[1] ? cur : best));
-    return { label, value: bestVal, when: bestKey, format };
+    // If the key already includes a year (e.g. "Feb 2025"), keep as-is.
+    // Otherwise append the current year so the record is unambiguous.
+    const when = /\b(19|20)\d{2}\b/.test(bestKey) ? bestKey : `${bestKey} ${currentYear}`;
+    return { label, value: bestVal, when, format };
   }
 
   const grossLeadsRec = bestMonth(salesMonthly.gross_leads, "Most Gross Leads (mo)", "int");
