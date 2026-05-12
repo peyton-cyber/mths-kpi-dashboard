@@ -159,7 +159,7 @@ async function fetchRecentCalls(apiKey: string, cutoffISO: string, signal?: Abor
 async function fetchAqPipelineDeals(apiKey: string, signal?: AbortSignal) {
   return fubPaginate<any>(
     apiKey,
-    `/deals?pipelineId=2&limit=100&sort=-updated&fields=allFields`,
+    `/deals?pipelineId=2&limit=100&sort=-updated`,
     "deals",
     undefined,
     signal,
