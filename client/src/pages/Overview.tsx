@@ -431,10 +431,17 @@ export default function Overview() {
                 status={statusFromTarget(q2Actual, q2Target / 3, true, 0.1)}
               />
               <StatRow
-                label={`${latestMonth} Closed Revenue`}
+                label={`${latestMonth} Funded Revenue`}
                 value={fmtMoney(salesMonthly.revenue[latestMonth] ?? 0)}
-                sub={`Actual recognized in ${latestMonth}`}
+                sub={`${salesMonthly.closed_deals?.[latestMonth] ?? 0} deals closed on/before today`}
               />
+              {(((salesMonthly as any).revenue_assigned?.[latestMonth] ?? 0) > 0) && (
+                <StatRow
+                  label={`${latestMonth} Assigned Revenue`}
+                  value={fmtMoney((salesMonthly as any).revenue_assigned?.[latestMonth] ?? 0)}
+                  sub={`${(salesMonthly as any).closed_deals_assigned?.[latestMonth] ?? 0} more on the board, future-dated`}
+                />
+              )}
               <StatRow
                 label="Profit Margin Target"
                 value={`${(company.profit_margin_target * 100).toFixed(0)}%`}

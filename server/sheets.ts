@@ -876,23 +876,55 @@ export async function fetchAllKpiData() {
   // ================================================================
   // PHASE 8: REVENUE TRACKER IS NOW THE SOURCE OF TRUTH FOR REVENUE
   // ----------------------------------------------------------------
-  // Decision from May 12 review: company scorecard revenue for every
-  // period (day/week/month/quarter/year) should be driven by the
-  // Rev Tracker, NOT the Master KPI "Sales Team Revenue" row.
-  // The Master KPI sheet is unreliable for revenue.
+  // Decision from May 12 review:
+  //   - Company scorecard revenue for every period (day/week/month/quarter/year)
+  //     is driven by the Rev Tracker, NOT the Master KPI "Sales Team Revenue" row.
+  //   - HEADLINE revenue / closed_deals = FUNDED only (close date <= today).
+  //     Future-dated contracted deals (assigned) are surfaced as a separate field
+  //     so the UI can show "$118K funded + $317K assigned" rather than $436K.
+  //   - activeMonths never extends past the current calendar month, so we don't
+  //     paint June/July/Aug tiles when those months haven't happened yet.
   // ================================================================
-  for (const mk of MONTH_SHORT) {
-    if (revenueActuals[mk] !== undefined) {
-      salesMonthly.revenue[mk] = revenueActuals[mk];
-    }
-    if (closedDealsByMonth[mk] !== undefined) {
-      salesMonthly.closed_deals[mk] = closedDealsByMonth[mk];
-    }
-    if (revenueActuals[mk] && !activeMonths.includes(mk)) {
+  const _currentMonthIdx0 = _now.getMonth(); // 0..11
+  // Ensure salesMonthly has assigned and total companion fields for the tiles
+  (salesMonthly as any).revenue_assigned = (salesMonthly as any).revenue_assigned || {};
+  (salesMonthly as any).revenue_total = (salesMonthly as any).revenue_total || {};
+  (salesMonthly as any).closed_deals_assigned = (salesMonthly as any).closed_deals_assigned || {};
+  (salesMonthly as any).closed_deals_total = (salesMonthly as any).closed_deals_total || {};
+
+  for (let i = 0; i < MONTH_SHORT.length; i++) {
+    const mk = MONTH_SHORT[i];
+    const totalRev = revenueActuals[mk] ?? 0;
+    const fundedRev = revenueActualsFunded[mk] ?? 0;
+    const totalDeals = closedDealsByMonth[mk] ?? 0;
+    const fundedDeals = fundedDealsByMonth[mk] ?? 0;
+
+    // FUNDED (closed and in the bank) — what the headline tile shows
+    salesMonthly.revenue[mk] = fundedRev;
+    salesMonthly.closed_deals[mk] = fundedDeals;
+
+    // ASSIGNED (signed but future-dated within current month) — sub-line
+    (salesMonthly as any).revenue_assigned[mk] = Math.max(0, totalRev - fundedRev);
+    (salesMonthly as any).closed_deals_assigned[mk] = Math.max(0, totalDeals - fundedDeals);
+
+    // TOTAL = funded + assigned (the prior headline value, kept for reference)
+    (salesMonthly as any).revenue_total[mk] = totalRev;
+    (salesMonthly as any).closed_deals_total[mk] = totalDeals;
+
+    // Mark month active only if it has FUNDED revenue AND is not in the future
+    if (fundedRev > 0 && i <= _currentMonthIdx0 && !activeMonths.includes(mk)) {
       activeMonths.push(mk);
     }
   }
-  console.log(`[sheets] Phase 8: Rev Tracker drives salesMonthly.revenue & closed_deals`);
+  // Hard cap: scrub any month index > current month that may have been added
+  // earlier (e.g. via sheet rows that contain pre-entered June/July deals).
+  for (let i = activeMonths.length - 1; i >= 0; i--) {
+    const idx = MONTH_SHORT.indexOf(activeMonths[i]);
+    if (idx > _currentMonthIdx0) {
+      activeMonths.splice(i, 1);
+    }
+  }
+  console.log(`[sheets] Phase 8: Rev Tracker drives salesMonthly.revenue (FUNDED). activeMonths capped at idx ${_currentMonthIdx0} (${MONTH_SHORT[_currentMonthIdx0]}): [${activeMonths.join(", ")}]`);
 
   // ================================================================
   // Weekly Marketing month patch (Phase 6.1)
@@ -971,9 +1003,13 @@ export async function fetchAllKpiData() {
   // We compute mktg + weekly totals later in the function, so we patch ytd
   // post-hoc once those are available.
   const ytd: any = {
-    revenue: sum(salesMonthly.revenue),
+    revenue: sum(salesMonthly.revenue),                                       // FUNDED only (closed/in the bank)
+    revenue_assigned: sum((salesMonthly as any).revenue_assigned || {}),       // Signed but not yet closed
+    revenue_total: sum((salesMonthly as any).revenue_total || {}),            // Funded + Assigned
     contracts: sum(salesMonthly.contracts),
-    closed_deals: sum(salesMonthly.closed_deals),
+    closed_deals: sum(salesMonthly.closed_deals),                             // FUNDED deal count
+    closed_deals_assigned: sum((salesMonthly as any).closed_deals_assigned || {}),
+    closed_deals_total: sum((salesMonthly as any).closed_deals_total || {}),
     marketing_spend: sum(salesMonthly.marketing_spend),
     gross_leads: sum(salesMonthly.gross_leads),
     net_leads: sum(salesMonthly.net_leads),
@@ -1000,9 +1036,13 @@ export async function fetchAllKpiData() {
   const q4Months = activeMonths.filter((m) => ["Oct", "Nov", "Dec"].includes(m));
 
   const buildQuarter = (months: string[]) => ({
-    revenue: sumForMonths(salesMonthly.revenue, months),
+    revenue: sumForMonths(salesMonthly.revenue, months),                                // FUNDED
+    revenue_assigned: sumForMonths((salesMonthly as any).revenue_assigned || {}, months),
+    revenue_total: sumForMonths((salesMonthly as any).revenue_total || {}, months),
     contracts: sumForMonths(salesMonthly.contracts, months),
     closed_deals: sumForMonths(salesMonthly.closed_deals, months),
+    closed_deals_assigned: sumForMonths((salesMonthly as any).closed_deals_assigned || {}, months),
+    closed_deals_total: sumForMonths((salesMonthly as any).closed_deals_total || {}, months),
     gross_leads: sumForMonths(salesMonthly.gross_leads, months),
     net_leads: sumForMonths(salesMonthly.net_leads, months),
     marketing_spend: sumForMonths(salesMonthly.marketing_spend, months),
