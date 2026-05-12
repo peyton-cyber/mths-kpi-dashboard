@@ -61,6 +61,35 @@ export default function Overview() {
     dailyDates, dailySales, transactions, companyRecords,
     cashConversionCycle,
   } = data;
+  // Board prep additions — may be undefined on older backends
+  const dealEconomics = (data as any).dealEconomics as
+    | {
+        fundedDealCount: number;
+        avgDealSize: number;
+        medianDealSize: number;
+        avgDealSizeByMonth: Record<string, number>;
+        avgDaysToClose: number;
+        medianDaysToClose: number;
+        daysToCloseNote?: string;
+      }
+    | undefined;
+  const pipelineForward = (data as any).pipelineForward as
+    | {
+        currentMonthRemaining: { count: number; value: number };
+        futureMonths: { count: number; value: number };
+        total: { count: number; value: number };
+        byMonth: Record<string, { count: number; value: number }>;
+        projected: { count: number; value: number };
+      }
+    | undefined;
+  const conversionFunnel = (data as any).conversionFunnel as
+    | {
+        windowDays: number;
+        source: string;
+        stages: { label: string; value: number; fromPrev: number | null; fromTop: number }[];
+        fubError?: string;
+      }
+    | undefined;
   const MONTHS = salesActiveMonths;
 
   const latestMonth = MONTHS.length > 0 ? MONTHS[MONTHS.length - 1] : "Jan";
@@ -115,16 +144,27 @@ export default function Overview() {
   const paceStatus = statusFromTarget(ytd.revenue, annualGoal * (MONTHS.length / 12), true, 0.15);
 
   // Hero revenue ring — period-appropriate
+  // For the CURRENT (in-progress) month/quarter/year, use TOTAL (funded + assigned)
+  // as the headline — mid-period funded alone underrepresents what's on the board.
+  // For prior periods (Jan, Feb, Mar, Apr in May), funded equals total so it's identical.
+  const monthRev = (m: string) => {
+    const total = (salesMonthly as any).revenue_total?.[m] ?? 0;
+    const funded = salesMonthly.revenue[m] ?? 0;
+    return total > 0 ? total : funded;
+  };
   const heroRevenue = (() => {
     switch (effectivePeriod) {
-      case "day":   return Math.round((salesMonthly.revenue[latestMonth] ?? 0) / 30);
-      case "week":  return Math.round((salesMonthly.revenue[latestMonth] ?? 0) / 4);
-      case "month": return salesMonthly.revenue[latestMonth] ?? 0;
+      case "day":   return Math.round(monthRev(latestMonth) / 30);
+      case "week":  return Math.round(monthRev(latestMonth) / 4);
+      case "month": return monthRev(latestMonth);
       case "quarter": {
-        const qRev = quarterly[currentQ as "Q1"|"Q2"|"Q3"|"Q4"].revenue;
-        return qRev > 0 ? qRev : salesMonthly.revenue[latestMonth] ?? 0;
+        const qData = quarterly[currentQ as "Q1"|"Q2"|"Q3"|"Q4"];
+        const qTotal = (qData as any).revenue_total ?? 0;
+        const qFunded = qData.revenue ?? 0;
+        const qVal = qTotal > 0 ? qTotal : qFunded;
+        return qVal > 0 ? qVal : monthRev(latestMonth);
       }
-      case "year":  return ytd.revenue;
+      case "year":  return (ytd as any).revenue_total ?? ytd.revenue;
     }
   })();
 
@@ -281,19 +321,35 @@ export default function Overview() {
     : ["Gross Leads", "Net Leads", "Appts Set", "Appts Executed", "Contracts"];
   const lineColors = ["hsl(var(--chart-1))", "hsl(var(--chart-3))", "hsl(var(--chart-2))", "hsl(var(--chart-5))", "hsl(var(--chart-4))"];
 
-  // Revenue chart — per-month goals from Asana
-  const revenueMonthlyData = activeMonths.map((m) => ({
-    month: m,
-    Revenue: salesMonthly.revenue[m] ?? 0,
-    Goal: monthRevGoal(m),
-  }));
+  // Revenue chart — per-month goals from Asana.
+  // For the CURRENT in-progress month, show total (funded + assigned) so the bar reflects
+  // what's actually on the board. Past months will have assigned = 0 so total == funded.
+  const revenueMonthlyData = activeMonths.map((m) => {
+    const total = (salesMonthly as any).revenue_total?.[m] ?? 0;
+    const funded = salesMonthly.revenue[m] ?? 0;
+    return {
+      month: m,
+      Revenue: total > 0 ? total : funded,
+      Funded: funded,
+      Goal: monthRevGoal(m),
+    };
+  });
 
   const Q_MONTHS: Record<string, string[]> = {
     Q1: ["Jan","Feb","Mar"], Q2: ["Apr","May","Jun"],
     Q3: ["Jul","Aug","Sep"], Q4: ["Oct","Nov","Dec"],
   };
   const quarterlyRevenueData = (["Q1","Q2","Q3","Q4"] as const)
-    .map((q) => ({ period: q, Revenue: quarterly[q].revenue, Goal: Q_MONTHS[q].reduce((s, m) => s + monthRevGoal(m), 0) }))
+    .map((q) => {
+      const total = (quarterly[q] as any).revenue_total ?? 0;
+      const funded = quarterly[q].revenue ?? 0;
+      return {
+        period: q,
+        Revenue: total > 0 ? total : funded,
+        Funded: funded,
+        Goal: Q_MONTHS[q].reduce((s, m) => s + monthRevGoal(m), 0),
+      };
+    })
     .filter((q) => q.Revenue > 0);
 
   const weeklyGoal = Math.round(currentMonthGoal / 4);
@@ -317,7 +373,7 @@ export default function Overview() {
             ? quarterlyRevenueData
             : [{ period: currentQ, Revenue: pipe.revenue, Goal: (Q_MONTHS[currentQ] || []).reduce((s: number, m: string) => s + monthRevGoal(m), 0) }];
         case "year":
-          return [{ period: "YTD", Revenue: ytd.revenue, Goal: annualGoal }];
+          return [{ period: "YTD", Revenue: (ytd as any).revenue_total ?? ytd.revenue, Funded: ytd.revenue, Goal: annualGoal }];
       }
     })();
     return d.length > 0 ? d : [{ period: latestMonth, Revenue: salesMonthly.revenue[latestMonth] ?? 0, Goal: currentMonthGoal }];
@@ -431,15 +487,20 @@ export default function Overview() {
                 status={statusFromTarget(q2Actual, q2Target / 3, true, 0.1)}
               />
               <StatRow
-                label={`${latestMonth} Funded Revenue`}
+                label={`${latestMonth} On the Board`}
+                value={fmtMoney((salesMonthly as any).revenue_total?.[latestMonth] ?? (salesMonthly.revenue[latestMonth] ?? 0))}
+                sub={`${(salesMonthly as any).closed_deals_total?.[latestMonth] ?? salesMonthly.closed_deals?.[latestMonth] ?? 0} total deals (funded + assigned)`}
+              />
+              <StatRow
+                label={`${latestMonth} Funded (in the bank)`}
                 value={fmtMoney(salesMonthly.revenue[latestMonth] ?? 0)}
                 sub={`${salesMonthly.closed_deals?.[latestMonth] ?? 0} deals closed on/before today`}
               />
               {(((salesMonthly as any).revenue_assigned?.[latestMonth] ?? 0) > 0) && (
                 <StatRow
-                  label={`${latestMonth} Assigned Revenue`}
+                  label={`${latestMonth} Assigned (signed, not yet closed)`}
                   value={fmtMoney((salesMonthly as any).revenue_assigned?.[latestMonth] ?? 0)}
-                  sub={`${(salesMonthly as any).closed_deals_assigned?.[latestMonth] ?? 0} more on the board, future-dated`}
+                  sub={`${(salesMonthly as any).closed_deals_assigned?.[latestMonth] ?? 0} more scheduled to close later this month`}
                 />
               )}
               <StatRow
@@ -651,6 +712,116 @@ export default function Overview() {
           })()}
         </div>
       </Section>
+
+      {/* Board Snapshot — Funnel + Deal Economics + Forward Pipeline */}
+      {(conversionFunnel || dealEconomics || pipelineForward) && (
+        <Section title="Board Snapshot" subtitle={`Last ${conversionFunnel?.windowDays ?? 30} days conversion + deal economics + forward pipeline`}>
+          <div className="grid grid-cols-12 gap-3">
+            {/* Conversion Funnel */}
+            {conversionFunnel && (
+              <Card className="col-span-12 lg:col-span-5" padding="p-5">
+                <div className="flex items-baseline justify-between mb-3">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
+                      Conversion Funnel
+                    </div>
+                    <div className="text-lg font-semibold tracking-tight mt-0.5">
+                      Calls → Funded ({conversionFunnel.windowDays}d)
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground">{conversionFunnel.source}</div>
+                </div>
+                <div className="space-y-2">
+                  {conversionFunnel.stages.map((stage, i) => {
+                    const widthPct = Math.max(4, Math.min(100, stage.fromTop));
+                    return (
+                      <div key={stage.label} className="text-sm">
+                        <div className="flex items-baseline justify-between mb-1">
+                          <div className="font-medium">{stage.label}</div>
+                          <div className="tabular text-right">
+                            <span className="font-semibold">{stage.value.toLocaleString()}</span>
+                            {stage.fromPrev !== null && (
+                              <span className="ml-2 text-xs text-muted-foreground">
+                                {stage.fromPrev}% from prev
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-primary rounded-full transition-all"
+                            style={{ width: `${widthPct}%`, opacity: 1 - i * 0.12 }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            )}
+
+            {/* Deal Economics */}
+            {dealEconomics && (
+              <Card className="col-span-12 lg:col-span-3" padding="p-5">
+                <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
+                  Deal Economics (YTD)
+                </div>
+                <div className="text-lg font-semibold tracking-tight mt-0.5 mb-3">
+                  Avg Deal · Days-to-Close
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Avg Deal Size</div>
+                    <div className="text-2xl font-semibold tabular">{fmtMoney(dealEconomics.avgDealSize)}</div>
+                    <div className="text-xs text-muted-foreground">Median {fmtMoney(dealEconomics.medianDealSize)} · n={dealEconomics.fundedDealCount}</div>
+                  </div>
+                  <div className="pt-2 border-t border-border/40">
+                    <div className="text-xs text-muted-foreground">Avg Days to Close</div>
+                    <div className="text-2xl font-semibold tabular">{dealEconomics.avgDaysToClose}d</div>
+                    <div className="text-xs text-muted-foreground">Median {dealEconomics.medianDaysToClose}d</div>
+                  </div>
+                </div>
+              </Card>
+            )}
+
+            {/* Forward Pipeline Value */}
+            {pipelineForward && (
+              <Card className="col-span-12 lg:col-span-4" padding="p-5">
+                <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
+                  Forward Pipeline
+                </div>
+                <div className="text-lg font-semibold tracking-tight mt-0.5 mb-3">
+                  What's coming
+                </div>
+                <div className="space-y-1.5">
+                  <StatRow
+                    label={`${latestMonth} — Remaining`}
+                    value={fmtMoney(pipelineForward.currentMonthRemaining.value)}
+                    sub={`${pipelineForward.currentMonthRemaining.count} deals scheduled later this month`}
+                  />
+                  <StatRow
+                    label="Future Months"
+                    value={fmtMoney(pipelineForward.futureMonths.value)}
+                    sub={`${pipelineForward.futureMonths.count} deals beyond ${latestMonth}`}
+                  />
+                  <StatRow
+                    label="Total Forward"
+                    value={fmtMoney(pipelineForward.total.value)}
+                    sub={`${pipelineForward.total.count} assigned, not yet funded`}
+                  />
+                  {pipelineForward.projected.count > 0 && (
+                    <StatRow
+                      label="TBD / Projected"
+                      value={fmtMoney(pipelineForward.projected.value)}
+                      sub={`${pipelineForward.projected.count} no close date set`}
+                    />
+                  )}
+                </div>
+              </Card>
+            )}
+          </div>
+        </Section>
+      )}
 
       {/* Pipeline trend */}
       <Section title="Pipeline Trend" subtitle={pipelineSubtitle}>

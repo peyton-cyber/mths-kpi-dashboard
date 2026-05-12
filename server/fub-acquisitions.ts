@@ -167,6 +167,19 @@ async function fetchAqPipelineDeals(apiKey: string, signal?: AbortSignal) {
   );
 }
 
+async function fetchDispoPipelineDeals(apiKey: string, signal?: AbortSignal) {
+  // Disposition pipeline (1): deals that have been signed UC — they include the original
+  // AQ rep in users[] alongside dispo agents.
+  return fubPaginate<any>(
+    apiKey,
+    `/deals?pipelineId=1&limit=100&sort=-updated`,
+    "deals",
+    undefined,
+    signal,
+    30,
+  );
+}
+
 export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<AcqFubData> {
   const fetchedAt = new Date().toISOString();
   const empty: AcqFubData = {
@@ -194,10 +207,11 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
     const startISO = start.toISOString();
     const endISO = now.toISOString();
 
-    const [appts, calls, aqDeals] = await Promise.all([
+    const [appts, calls, aqDeals, dispoDeals] = await Promise.all([
       fetchAllAppointments(apiKey, startISO, endISO, controller.signal),
       fetchRecentCalls(apiKey, startISO, controller.signal),
       fetchAqPipelineDeals(apiKey, controller.signal),
+      fetchDispoPipelineDeals(apiKey, controller.signal),
     ]);
     clearTimeout(timer);
 
@@ -302,6 +316,37 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
         for (const rep of repsOnDeal) statsByRep[rep].newLeads += 1;
       }
     }
+    // ----- Disposition pipeline: deals that signed UC. The AQ rep stays in users[]
+    // alongside dispo agents, so we credit them based on customUnderContractDate (canonical
+    // contract signal) when it falls in the window. This is the authoritative contract count.
+    const aqRepIds = new Set(AQ_REPS.map(r => r.fubUserId));
+    for (const d of dispoDeals) {
+      const ucStr = d.customUnderContractDate;
+      if (!ucStr) continue;
+      const ucMs = new Date(ucStr).getTime();
+      if (ucMs < cutoffMs) continue;
+      const users: any[] = d.users || [];
+      const aqRepsOnDeal = new Set<string>();
+      for (const u of users) {
+        if (u.id && aqRepIds.has(u.id)) {
+          const canonical = REP_BY_ID.get(u.id);
+          if (canonical) aqRepsOnDeal.add(canonical);
+        }
+      }
+      if (aqRepsOnDeal.size > 0) {
+        // Credit ONE primary AQ rep per deal to avoid double-counting (lowest userId = original AQ)
+        const primary = users
+          .filter((u: any) => u.id && aqRepIds.has(u.id))
+          .sort((a: any, b: any) => (a.id || 0) - (b.id || 0))[0];
+        if (primary?.id) {
+          const canonical = REP_BY_ID.get(primary.id);
+          if (canonical) statsByRep[canonical].contracts += 1;
+        }
+      } else {
+        teamContractsFallback += 1;
+      }
+    }
+
     // Distribute unattributed offers/contracts proportional to appts so totals stay accurate.
     const totalApptsSet = Object.values(statsByRep).reduce((sum, s) => sum + s.apptsSet, 0);
     if (totalApptsSet > 0 && (teamOffersFallback > 0 || teamContractsFallback > 0)) {

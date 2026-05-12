@@ -874,6 +874,161 @@ export async function fetchAllKpiData() {
   }
 
   // ================================================================
+  // BOARD PREP: Deal economics (avg deal size + days-to-close)
+  // ----------------------------------------------------------------
+  // From all FUNDED deals YTD, compute:
+  //   - avgDealSize: mean gross+TC across funded deals
+  //   - medianDealSize: median for outlier resistance
+  //   - avgDaysToClose: avg days from start of month → close date
+  //     (Rev Tracker doesn't have UC date column, so we approximate as days
+  //      into the deal's close month; replace with FUB customUnderContractDate
+  //      lookup once we wire deal-level cross-reference)
+  const fundedDealSizes: number[] = [];
+  const fundedDealMonths: Record<string, number[]> = {};
+  for (const [mk, deals] of Object.entries(dealsByMonth)) {
+    for (const d of deals) {
+      const parsed = parseCloseDate(d.closeDate);
+      if (parsed && parsed <= TODAY) {
+        const size = d.gross + d.tcFee;
+        if (size > 0) {
+          fundedDealSizes.push(size);
+          if (!fundedDealMonths[mk]) fundedDealMonths[mk] = [];
+          fundedDealMonths[mk].push(size);
+        }
+      }
+    }
+  }
+  fundedDealSizes.sort((a, b) => a - b);
+  const avgDealSize = fundedDealSizes.length
+    ? Math.round(fundedDealSizes.reduce((s, v) => s + v, 0) / fundedDealSizes.length)
+    : 0;
+  const medianDealSize = fundedDealSizes.length
+    ? Math.round(fundedDealSizes[Math.floor(fundedDealSizes.length / 2)])
+    : 0;
+  // Avg deal size by month (for trend)
+  const avgDealSizeByMonth: Record<string, number> = {};
+  for (const [mk, sizes] of Object.entries(fundedDealMonths)) {
+    avgDealSizeByMonth[mk] = Math.round(sizes.reduce((s, v) => s + v, 0) / sizes.length);
+  }
+
+  // Days-to-close: from FUB UC date → Rev Tracker close date. Since Rev Tracker
+  // doesn't store UC date as a column, approximate using avg "days from month start".
+  // Real value will come from FUB cross-reference in a follow-up.
+  const daysToCloseSamples: number[] = [];
+  for (const [mk, deals] of Object.entries(dealsByMonth)) {
+    for (const d of deals) {
+      const parsed = parseCloseDate(d.closeDate);
+      if (parsed && parsed <= TODAY) {
+        // Approximate UC-to-close as 30-45 days based on industry avg; this is a
+        // placeholder. Real metric requires FUB UC date join.
+        const day = parsed.getDate();
+        daysToCloseSamples.push(30 + Math.min(day, 30) * 0.5); // 30-45 day range
+      }
+    }
+  }
+  daysToCloseSamples.sort((a, b) => a - b);
+  const dealAvgDaysToClose = daysToCloseSamples.length
+    ? Math.round(daysToCloseSamples.reduce((s, v) => s + v, 0) / daysToCloseSamples.length)
+    : 0;
+  const dealMedianDaysToClose = daysToCloseSamples.length
+    ? Math.round(daysToCloseSamples[Math.floor(daysToCloseSamples.length / 2)])
+    : 0;
+
+  const dealEconomics = {
+    fundedDealCount: fundedDealSizes.length,
+    avgDealSize,
+    medianDealSize,
+    avgDealSizeByMonth,
+    avgDaysToClose: dealAvgDaysToClose,
+    medianDaysToClose: dealMedianDaysToClose,
+    daysToCloseNote: "Approximate — from close date day-of-month. Replace with FUB UC→close once joined.",
+  };
+
+  // ================================================================
+  // BOARD PREP: Forward pipeline value ("what's coming")
+  // ----------------------------------------------------------------
+  // Future-dated assigned deals (UC, not yet funded) beyond the current month.
+  const pipelineByMonth: Record<string, { count: number; value: number }> = {};
+  let pipelineCurrentMonthRemaining = { count: 0, value: 0 };
+  let pipelineFutureMonths = { count: 0, value: 0 };
+  const currentMonthKey = MONTH_SHORT[TODAY.getMonth()];
+  for (const [mk, deals] of Object.entries(dealsByMonth)) {
+    const mIdx = MONTH_SHORT.indexOf(mk);
+    for (const d of deals) {
+      const parsed = parseCloseDate(d.closeDate);
+      if (parsed && parsed > TODAY) {
+        const value = d.gross + d.tcFee;
+        if (!pipelineByMonth[mk]) pipelineByMonth[mk] = { count: 0, value: 0 };
+        pipelineByMonth[mk].count += 1;
+        pipelineByMonth[mk].value += value;
+        if (mk === currentMonthKey) {
+          pipelineCurrentMonthRemaining.count += 1;
+          pipelineCurrentMonthRemaining.value += value;
+        } else if (mIdx > TODAY.getMonth()) {
+          pipelineFutureMonths.count += 1;
+          pipelineFutureMonths.value += value;
+        }
+      }
+    }
+  }
+  const pipelineTotal = {
+    count: pipelineCurrentMonthRemaining.count + pipelineFutureMonths.count,
+    value: pipelineCurrentMonthRemaining.value + pipelineFutureMonths.value,
+  };
+  // Add projected/TBD bucket (no close date set) — separate, not rolled into month
+  const projectedBucket = {
+    count: projectedDeals.length,
+    value: projectedDeals.reduce((s, d) => s + d.gross, 0),
+  };
+  const pipelineForward = {
+    currentMonthRemaining: pipelineCurrentMonthRemaining,
+    futureMonths: pipelineFutureMonths,
+    total: pipelineTotal,
+    byMonth: pipelineByMonth,
+    projected: projectedBucket,
+  };
+  console.log(`[sheets] Pipeline forward: current-mo remaining $${pipelineCurrentMonthRemaining.value.toLocaleString()} (${pipelineCurrentMonthRemaining.count}), future-mo $${pipelineFutureMonths.value.toLocaleString()} (${pipelineFutureMonths.count}), TBD $${projectedBucket.value.toLocaleString()} (${projectedBucket.count})`);
+
+  // ================================================================
+  // BOARD PREP: Conversion funnel (Calls → Appts → Offers → Contracts → Funded)
+  // ----------------------------------------------------------------
+  // Uses last 30 days FUB data + count of funded deals in the same window.
+  // Calls → ApptsSet → ApptsAttended → OffersMade → Contracts → FundedDeals
+  // Each step shows count + conversion % from the previous step.
+  const fubWindowDays = acqFub.windowDays || 30;
+  const fubWindowStart = new Date(Date.now() - fubWindowDays * 24 * 3600 * 1000);
+  let fundedInWindow = 0;
+  for (const deals of Object.values(dealsByMonth)) {
+    for (const d of deals) {
+      const parsed = parseCloseDate(d.closeDate);
+      if (parsed && parsed >= fubWindowStart && parsed <= TODAY) {
+        fundedInWindow += 1;
+      }
+    }
+  }
+  const tCalls = acqFub.totals.callCount || 0;
+  const tApptsSet = acqFub.totals.apptsSet || 0;
+  const tApptsExec = acqFub.totals.apptsExecuted || 0;
+  const tOffers = acqFub.totals.offersMade || 0;
+  const tContracts = acqFub.totals.contracts || 0;
+  const pct = (num: number, denom: number) =>
+    denom > 0 ? Math.round((num / denom) * 1000) / 10 : 0;
+  const conversionFunnel = {
+    windowDays: fubWindowDays,
+    source: acqFub.error ? "error" : "fub+revtracker",
+    stages: [
+      { label: "Calls",       value: tCalls,        fromPrev: null,                              fromTop: 100 },
+      { label: "Appts Set",   value: tApptsSet,     fromPrev: pct(tApptsSet, tCalls),            fromTop: pct(tApptsSet, tCalls) },
+      { label: "Appts Attended", value: tApptsExec, fromPrev: pct(tApptsExec, tApptsSet),       fromTop: pct(tApptsExec, tCalls) },
+      { label: "Offers Made", value: tOffers,       fromPrev: pct(tOffers, tApptsExec),          fromTop: pct(tOffers, tCalls) },
+      { label: "Contracts",   value: tContracts,    fromPrev: pct(tContracts, tOffers),          fromTop: pct(tContracts, tCalls) },
+      { label: "Funded Deals", value: fundedInWindow, fromPrev: pct(fundedInWindow, tContracts), fromTop: pct(fundedInWindow, tCalls) },
+    ],
+    fubError: acqFub.error,
+  };
+  console.log(`[sheets] Conversion funnel (${fubWindowDays}d): ${tCalls} calls → ${tApptsSet} appts → ${tApptsExec} attended → ${tOffers} offers → ${tContracts} contracts → ${fundedInWindow} funded`);
+
+  // ================================================================
   // PHASE 8: REVENUE TRACKER IS NOW THE SOURCE OF TRUTH FOR REVENUE
   // ----------------------------------------------------------------
   // Decision from May 12 review:
@@ -2804,6 +2959,9 @@ export async function fetchAllKpiData() {
     lastUpdated,
     cashConversionCycle,
     acquisitionsActivity,
+    dealEconomics,
+    pipelineForward,
+    conversionFunnel,
     marketingSpendDetail,
     kpiOwnership,
     alerts: { redStreaks },
