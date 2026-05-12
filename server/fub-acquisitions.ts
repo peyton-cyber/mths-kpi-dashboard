@@ -159,7 +159,7 @@ async function fetchRecentCalls(apiKey: string, cutoffISO: string, signal?: Abor
 async function fetchAqPipelineDeals(apiKey: string, signal?: AbortSignal) {
   return fubPaginate<any>(
     apiKey,
-    `/deals?pipelineId=2&limit=100&sort=-updated`,
+    `/deals?pipelineId=2&limit=100&sort=-updated&fields=allFields`,
     "deals",
     undefined,
     signal,
@@ -254,33 +254,61 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
       s.talkTimeMin += Math.round(((c.duration || 0) / 60) * 10) / 10;
     }
 
-    // ----- AQ pipeline deals
-    // The Acquisition pipeline doesn't fill the `users` array on deals reliably
-    // (verified May 2026: users=[] on most AQ deals). So we count totals at
-    // stage level for the team; per-rep offer/contract attribution requires
-    // appointment/note authorship which is out of scope for this pass.
-    // We DO surface stage counts in totals so the dashboard can show team-level
-    // offers/contracts in flight, while per-rep counts come from appts + calls.
-    let totalContracts = 0;
-    let totalOffers = 0;
+    // ----- AQ pipeline deals — per-rep attribution via `users` array on each deal.
+    // OFFERS: a deal in "In Negotiations" stage (id 169) means an offer was made.
+    //         enteredStageAt tells us WHEN they entered negotiations — within window.
+    // CONTRACTS: a deal with customUnderContractDate set OR mutualAcceptanceDate within window,
+    //            OR a deal that's progressed beyond AQ (closed deal etc.)
+    const cutoffMs = start.getTime();
+    let teamOffersFallback = 0;
+    let teamContractsFallback = 0;
     for (const d of aqDeals) {
       const stage = (d.stageName || "").toLowerCase();
-      const ucDate = d.customUnderContractDate || d.mutualAcceptanceDate;
-      const pushDate = d.customPushDate;
-      // Contracts: under-contract date or stage indicates negotiation/UC
-      if (ucDate || stage.includes("negotiation") || stage.includes("under contract")) totalContracts++;
-      // Offers Made: a push date set (offer presented) OR stage indicates active offer
-      if (pushDate || stage.includes("offer")) totalOffers++;
+      const enteredStageAt = d.enteredStageAt ? new Date(d.enteredStageAt).getTime() : 0;
+      const ucDateStr = d.customUnderContractDate || d.mutualAcceptanceDate;
+      const ucDateMs = ucDateStr ? new Date(ucDateStr).getTime() : 0;
+      const stageInNegotiation = stage.includes("negotiation") || stage.includes("under contract");
+      const isOfferInWindow = stageInNegotiation && enteredStageAt >= cutoffMs;
+      const isContractInWindow = ucDateMs >= cutoffMs;
+
+      const users: any[] = d.users || [];
+      const repsOnDeal = new Set<string>();
+      for (const u of users) {
+        let canonical: string | null = null;
+        if (u.id && REP_BY_ID.has(u.id)) canonical = REP_BY_ID.get(u.id) || null;
+        if (!canonical) canonical = canonicalFromName(u.name);
+        if (canonical) repsOnDeal.add(canonical);
+      }
+
+      if (isOfferInWindow) {
+        if (repsOnDeal.size > 0) {
+          for (const rep of repsOnDeal) statsByRep[rep].offersMade += 1;
+        } else {
+          teamOffersFallback += 1;
+        }
+      }
+      if (isContractInWindow) {
+        if (repsOnDeal.size > 0) {
+          for (const rep of repsOnDeal) statsByRep[rep].contracts += 1;
+        } else {
+          teamContractsFallback += 1;
+        }
+      }
+      // Hot lead & new lead snapshot counts (current state, not in-window)
+      if (stage.includes("hot lead")) {
+        for (const rep of repsOnDeal) statsByRep[rep].hotLeads += 1;
+      }
+      if (stage.includes("new lead")) {
+        for (const rep of repsOnDeal) statsByRep[rep].newLeads += 1;
+      }
     }
-    // Spread team contracts/offers across reps proportional to appts (best
-    // available signal until FUB note ownership is wired up). This keeps the
-    // dashboard from showing zero offers/contracts per rep.
+    // Distribute unattributed offers/contracts proportional to appts so totals stay accurate.
     const totalApptsSet = Object.values(statsByRep).reduce((sum, s) => sum + s.apptsSet, 0);
-    if (totalApptsSet > 0) {
+    if (totalApptsSet > 0 && (teamOffersFallback > 0 || teamContractsFallback > 0)) {
       for (const s of Object.values(statsByRep)) {
         const share = s.apptsSet / totalApptsSet;
-        s.contracts = Math.round(totalContracts * share);
-        s.offersMade = Math.round(totalOffers * share);
+        s.offersMade += Math.round(teamOffersFallback * share);
+        s.contracts += Math.round(teamContractsFallback * share);
       }
     }
 
