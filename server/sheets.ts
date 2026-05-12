@@ -214,6 +214,31 @@ const MONTH_FULL = [
   "July","August","September","October","November","December",
 ];
 
+/**
+ * Parse a Rev Tracker close-date cell like "May 12", "April 30", "Feburary 3".
+ * Returns a JS Date in the current year, or null if unparseable.
+ */
+function parseCloseDate(raw: string | undefined): Date | null {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  if (!s || s.toUpperCase() === "TBD") return null;
+  const year = new Date().getFullYear();
+  // Match "Month Day" with optional year
+  const m = s.match(/^([A-Za-z]+)\s+(\d{1,2})(?:\s*,?\s*(\d{4}))?$/);
+  if (!m) return null;
+  const monthName = m[1].toLowerCase();
+  const day = parseInt(m[2], 10);
+  const yr = m[3] ? parseInt(m[3], 10) : year;
+  let monthIdx = MONTH_FULL.findIndex(mf => mf.toLowerCase() === monthName);
+  if (monthIdx === -1) {
+    // typo / prefix tolerance
+    if (monthName.startsWith("febu")) monthIdx = 1;
+    else monthIdx = MONTH_FULL.findIndex(mf => mf.toLowerCase().startsWith(monthName.slice(0, 3)));
+  }
+  if (monthIdx === -1) return null;
+  return new Date(yr, monthIdx, day);
+}
+
 // ========== MAIN FETCHER ==========
 
 export async function fetchAllKpiData() {
@@ -634,8 +659,14 @@ export async function fetchAllKpiData() {
   const revSheet = sheets.rev || { headers: [], rows: [], rowCount: 0 };
 
   const revenueActuals: Record<string, number> = {};
-  const dealsByMonth: Record<string, { deal: string; gross: number; closeDate: string }[]> = {};
-  const projectedDeals: { deal: string; gross: number; section: string }[] = [];
+  const tcFeeActuals: Record<string, number> = {};
+  const dealsByMonth: Record<string, { deal: string; gross: number; tcFee: number; closeDate: string; category: string }[]> = {};
+  const projectedDeals: { deal: string; gross: number; section: string; category: string }[] = [];
+  // Per-month bucket of TBD/projected deals (kept SEPARATE from monthly actuals,
+  // surfaced as its own "Projected" tile per Phase 8 review).
+  const tbdDealsBucket: { deal: string; gross: number; category: string }[] = [];
+  const listingReferralByMonth: Record<string, number> = {};
+  const closedDealsByMonth: Record<string, number> = {};
   const perPersonRevenue: Record<string, Record<string, number>> = {};
   const perPersonCommissions: Record<string, Record<string, number>> = {};
   // Per-agent gross revenue (sum of deal gross when that agent has a non-zero commission)
@@ -660,10 +691,23 @@ export async function fetchAllKpiData() {
   // Track which section we're in (for logging projected deals)
   let currentSection = "";
 
+  /** Classify a deal by name into a category (Phase 8 stage logic). */
+  function classifyDeal(name: string): string {
+    const n = String(name || "").toLowerCase();
+    if (n.includes("listing referral") || n.includes("listing-referral")) return "listing_referral";
+    if (n.includes("(flip)") || n.includes(" flip") || n.endsWith("flip")) return "flip";
+    if (n.includes("novation")) return "novation";
+    if (n.includes("(jv)") || n.includes(" jv ")) return "jv";
+    if (n.includes("(epp)")) return "epp";
+    if (n.includes("rental")) return "rental";
+    return "standard";
+  }
+
   for (const row of revSheet.rows) {
     const deal = (row["Deal"] || "").trim();
     const closeDate = (row["Close Date"] || "").trim();
     const gross = parseMoney(row[" Gross Revenue "]);
+    const tcFee = parseMoney(row[" TC Fee "]);
 
     // Track section for context ("January Actual", "February Actual", etc.)
     // Skip ALL summary/aggregate rows — we calculate our own totals
@@ -683,7 +727,9 @@ export async function fetchAllKpiData() {
     // Skip deals with no close date or "TBD" close date — these are projections
     if (!closeDate || closeDate.toUpperCase() === "TBD") {
       if (gross > 0) {
-        projectedDeals.push({ deal, gross, section: currentSection });
+        const category = classifyDeal(deal);
+        projectedDeals.push({ deal, gross, section: currentSection, category });
+        tbdDealsBucket.push({ deal, gross, category });
       }
       continue;
     }
@@ -702,8 +748,16 @@ export async function fetchAllKpiData() {
     if (monthIdx === -1) continue;
 
     const mk = MONTH_SHORT[monthIdx];
+    const category = classifyDeal(deal);
     if (!dealsByMonth[mk]) dealsByMonth[mk] = [];
-    dealsByMonth[mk].push({ deal, gross, closeDate });
+    dealsByMonth[mk].push({ deal, gross, tcFee, closeDate, category });
+    // Listing referrals are tracked separately but ALSO count in revenue total.
+    if (category === "listing_referral") {
+      listingReferralByMonth[mk] = (listingReferralByMonth[mk] || 0) + gross;
+    }
+    // Count closed deal (every row with a real close date counts, including referrals).
+    closedDealsByMonth[mk] = (closedDealsByMonth[mk] || 0) + 1;
+    tcFeeActuals[mk] = (tcFeeActuals[mk] || 0) + tcFee;
 
     // Per-person revenue/commission attribution (only for actual closed deals)
     //
@@ -763,48 +817,57 @@ export async function fetchAllKpiData() {
     }
   }
 
-  // Calculate ACTUAL revenue per month by summing individual closed deals
+  // Calculate ACTUAL revenue per month by summing closed deals.
+  //   Total = gross + TC fee (per Phase 8 review: TC fees count as revenue)
+  //   Closed deals with TBD/empty close dates were already excluded above.
+  // Build a parallel "funded only" view that excludes future-dated closes
+  // (deals dated in the future inside the current month, e.g. May 27 today is May 12).
+  const TODAY = new Date();
+  const revenueActualsFunded: Record<string, number> = {};
+  const fundedDealsByMonth: Record<string, number> = {};
   for (const [mk, deals] of Object.entries(dealsByMonth)) {
-    revenueActuals[mk] = deals.reduce((sum, d) => sum + d.gross, 0);
+    // Total revenue for the month (gross + TC), regardless of whether the close
+    // has passed yet — matches how the Rev Tracker sums in the sheet.
+    revenueActuals[mk] = deals.reduce((s, d) => s + d.gross + d.tcFee, 0);
+    // Funded = deals whose close date is on/before today (true "in the bank").
+    let funded = 0;
+    let fundedCount = 0;
+    for (const d of deals) {
+      const parsed = parseCloseDate(d.closeDate);
+      if (parsed && parsed <= TODAY) {
+        funded += d.gross + d.tcFee;
+        fundedCount += 1;
+      }
+    }
+    revenueActualsFunded[mk] = funded;
+    fundedDealsByMonth[mk] = fundedCount;
   }
 
   if (projectedDeals.length > 0) {
     const projTotal = projectedDeals.reduce((s, d) => s + d.gross, 0);
-    console.log(`[sheets] Revenue: excluded ${projectedDeals.length} projected/TBD deals ($${projTotal.toLocaleString()})`);
-    for (const d of projectedDeals) {
-      console.log(`  - ${d.deal}: $${d.gross.toLocaleString()} (${d.section || 'no section'})`);
-    }
+    console.log(`[sheets] Revenue: ${projectedDeals.length} projected/TBD deals tracked separately ($${projTotal.toLocaleString()})`);
   }
 
-  // DO NOT override salesMonthly.revenue with Revenue Tracker values.
-  // The Sales KPIs sheet "Sales Team Revenue" row is the source of truth for
-  // month-by-month actual revenue. The Revenue Tracker contains projected
-  // close dates for deals that haven't closed yet (e.g. April shows deals
-  // closing April 22-30 that haven't happened).
-  //
-  // Revenue Tracker data is still used for:
-  //   - Per-deal breakdowns (dealsByMonth)
-  //   - Per-person commissions (perPersonCommissions)
-  //   - Top deals (topDeals)
-  //   - Projected pipeline info
-  //
-  // Only use Revenue Tracker revenue for months where Sales KPIs has NO data
-  // but Revenue Tracker has actual closed deals (edge case for non-sales revenue).
-  for (const [mk, val] of Object.entries(revenueActuals)) {
-    const salesKpiRev = salesMonthly.revenue[mk] ?? 0;
-    if (salesKpiRev === 0 && val > 0) {
-      // Month not tracked in Sales KPIs but has Revenue Tracker data
-      // Still only include if the month is in the past
-      const monthIdx = MONTH_SHORT.indexOf(mk);
-      const now = new Date();
-      const currentMonthIdx = now.getMonth(); // 0-based (0=Jan, 3=Apr)
-      if (monthIdx < currentMonthIdx) {
-        // Past month — safe to include Revenue Tracker value
-        salesMonthly.revenue[mk] = val;
-        if (!activeMonths.includes(mk)) activeMonths.push(mk);
-      }
+  // ================================================================
+  // PHASE 8: REVENUE TRACKER IS NOW THE SOURCE OF TRUTH FOR REVENUE
+  // ----------------------------------------------------------------
+  // Decision from May 12 review: company scorecard revenue for every
+  // period (day/week/month/quarter/year) should be driven by the
+  // Rev Tracker, NOT the Master KPI "Sales Team Revenue" row.
+  // The Master KPI sheet is unreliable for revenue.
+  // ================================================================
+  for (const mk of MONTH_SHORT) {
+    if (revenueActuals[mk] !== undefined) {
+      salesMonthly.revenue[mk] = revenueActuals[mk];
+    }
+    if (closedDealsByMonth[mk] !== undefined) {
+      salesMonthly.closed_deals[mk] = closedDealsByMonth[mk];
+    }
+    if (revenueActuals[mk] && !activeMonths.includes(mk)) {
+      activeMonths.push(mk);
     }
   }
+  console.log(`[sheets] Phase 8: Rev Tracker drives salesMonthly.revenue & closed_deals`);
 
   // ================================================================
   // Weekly Marketing month patch (Phase 6.1)
@@ -1707,14 +1770,30 @@ export async function fetchAllKpiData() {
   }, 0);
 
   const projectedRevenue = projectedDeals.reduce((s, d) => s + d.gross, 0);
+  // Phase 8: expose Funded (closed + dated <= today) and Assigned (closed + dated > today)
+  // and TBD (Unassigned bucket). These power the new Projected tile and stage chips.
+  const ytdFundedRevenue = Object.values(revenueActualsFunded).reduce((s, v) => s + v, 0);
+  const ytdAssignedRevenue = Object.entries(revenueActuals).reduce((s, [mk, v]) => {
+    return s + (v - (revenueActualsFunded[mk] || 0));
+  }, 0);
+  const ytdListingReferralRevenue = Object.values(listingReferralByMonth).reduce((s, v) => s + v, 0);
   const revenueTracker = {
-    monthlyActuals: revenueActuals,
+    monthlyActuals: revenueActuals,                 // gross+TC, all deals with a real close date
+    monthlyFundedActuals: revenueActualsFunded,     // closes on/before today
+    monthlyClosedDeals: closedDealsByMonth,         // count of deals with real close dates
+    monthlyFundedDeals: fundedDealsByMonth,         // count of funded deals (closed on/before today)
+    monthlyTcFees: tcFeeActuals,
+    monthlyListingReferrals: listingReferralByMonth,
     dealsByMonth,
     perPersonCommissions,
     projectedYearTotal,
-    projectedDeals: projectedDeals.map(d => ({ deal: d.deal, gross: d.gross })),
+    projectedDeals: projectedDeals.map(d => ({ deal: d.deal, gross: d.gross, category: d.category })),
+    tbdDeals: tbdDealsBucket,
     projectedRevenue,
     ytdActualRevenue: Object.values(revenueActuals).reduce((s, v) => s + v, 0),
+    ytdFundedRevenue,
+    ytdAssignedRevenue,
+    ytdListingReferralRevenue,
   };
 
   // ================================================================
@@ -2408,7 +2487,24 @@ export async function fetchAllKpiData() {
     weeksRed: string[];
     latestActual: string;
     severity: "day3" | "week3";
+    priority: "system60" | "lead_mgmt" | "low";
+    flagSystem60: boolean;
   }> = [];
+
+  // ----------------------------------------------------------------
+  // Phase 8: KPI priority tiers (from May 12 review)
+  //   system60 = appts executed, offers made, contracts → auto System 60
+  //   lead_mgmt = scheduled, set, talk time, contact, cancelled
+  //   low = touch points, content video, matterports
+  // ----------------------------------------------------------------
+  function classifyMetricPriority(metric: string): "system60" | "lead_mgmt" | "low" {
+    const m = String(metric || "").toLowerCase();
+    if (m.includes("appointments executed") || m.includes("appts executed") || m === "appointments executed") return "system60";
+    if (m.includes("offers made")) return "system60";
+    if (m.includes("contract") && !m.includes("cancelled")) return "system60";
+    if (m.includes("content video") || m.includes("matterports") || m.includes("touch points")) return "low";
+    return "lead_mgmt";
+  }
   try {
     const rawRise = await fetchSheetRaw(SALES_STOPLIGHT, currentRiseTab);
     if (rawRise.length >= 12) {
@@ -2474,6 +2570,7 @@ export async function fetchAllKpiData() {
           }
         }
         if (streak >= 3) {
+          const priority = classifyMetricPriority(metric);
           redStreaks.push({
             person: owner,
             metric,
@@ -2482,6 +2579,8 @@ export async function fetchAllKpiData() {
             weeksRed,
             latestActual,
             severity: "week3",
+            priority,
+            flagSystem60: priority === "system60",
           });
         }
       }
@@ -2531,6 +2630,7 @@ export async function fetchAllKpiData() {
       ];
       for (const c of checks) {
         if (c.redCount >= 3) {
+          const priority = classifyMetricPriority(c.metric);
           redStreaks.push({
             person: agent,
             metric: c.metric,
@@ -2539,6 +2639,8 @@ export async function fetchAllKpiData() {
             weeksRed: recent3.map(d => d.date.toISOString().slice(0, 10)),
             latestActual: String(c.latest),
             severity: "day3",
+            priority,
+            flagSystem60: false, // day-3 alerts don't auto-trigger System 60
           });
         }
       }
