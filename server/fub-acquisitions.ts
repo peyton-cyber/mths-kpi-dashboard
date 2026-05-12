@@ -93,60 +93,78 @@ async function fubGet<T>(apiKey: string, path: string, signal?: AbortSignal): Pr
   return resp.json() as Promise<T>;
 }
 
-async function fetchAllAppointments(apiKey: string, startISO: string, endISO: string, signal?: AbortSignal) {
-  const all: any[] = [];
-  let offset = 0;
-  for (let i = 0; i < 30; i++) {
-    const d = await fubGet<{ appointments?: any[] }>(
-      apiKey,
-      `/appointments?limit=100&offset=${offset}&start=${startISO}&end=${endISO}`,
+/** Generic FUB paginator using `nextLink` (cursor pagination).
+ *  FUB disables offset-based pagination past ~2000 records. Cursor links
+ *  returned in _metadata.nextLink are the only way to walk large datasets.
+ *  earlyStop(record) lets the caller stop once results fall outside the
+ *  desired window (e.g. older than cutoff). */
+async function fubPaginate<T = any>(
+  apiKey: string,
+  firstPath: string,
+  arrayKey: string,
+  earlyStop?: (rec: T) => boolean,
+  signal?: AbortSignal,
+  maxPages = 60,
+): Promise<T[]> {
+  const all: T[] = [];
+  let nextUrl: string | null = `${FUB_BASE}${firstPath}`;
+  for (let i = 0; i < maxPages && nextUrl; i++) {
+    const resp = await fetch(nextUrl, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${apiKey}:`).toString("base64")}`,
+        "X-System": "MTHS-Dashboard",
+        "X-System-Key": "mths-kpi",
+      },
       signal,
-    );
-    const apps = d.appointments || [];
-    all.push(...apps);
-    if (apps.length < 100) break;
-    offset += 100;
+    });
+    if (!resp.ok) throw new Error(`FUB ${nextUrl} -> ${resp.status}: ${await resp.text()}`);
+    const data = await resp.json() as any;
+    const arr: T[] = data[arrayKey] || [];
+    let shouldStop = false;
+    for (const rec of arr) {
+      if (earlyStop && earlyStop(rec)) { shouldStop = true; break; }
+      all.push(rec);
+    }
+    if (shouldStop) break;
+    if (arr.length === 0) break;
+    nextUrl = data?._metadata?.nextLink || null;
   }
   return all;
+}
+
+async function fetchAllAppointments(apiKey: string, startISO: string, endISO: string, signal?: AbortSignal) {
+  return fubPaginate<any>(
+    apiKey,
+    `/appointments?limit=100&start=${startISO}&end=${endISO}`,
+    "appointments",
+    undefined,
+    signal,
+    30,
+  );
 }
 
 async function fetchRecentCalls(apiKey: string, cutoffISO: string, signal?: AbortSignal) {
-  const all: any[] = [];
-  let offset = 0;
-  for (let i = 0; i < 50; i++) {
-    const d = await fubGet<{ calls?: any[] }>(
-      apiKey,
-      `/calls?limit=100&offset=${offset}&sort=-created`,
-      signal,
-    );
-    const calls = d.calls || [];
-    let stopped = false;
-    for (const c of calls) {
-      if ((c.created || "") < cutoffISO) { stopped = true; continue; }
-      all.push(c);
-    }
-    if (calls.length < 100) break;
-    if (stopped) break;
-    offset += 100;
-  }
-  return all;
+  // Calls don't have a server-side date filter, so we walk newest-first via
+  // nextLink and stop once we cross the cutoff.
+  return fubPaginate<any>(
+    apiKey,
+    `/calls?limit=100&sort=-created`,
+    "calls",
+    (c) => (c.created || "") < cutoffISO,
+    signal,
+    60,
+  );
 }
 
 async function fetchAqPipelineDeals(apiKey: string, signal?: AbortSignal) {
-  const all: any[] = [];
-  let offset = 0;
-  for (let i = 0; i < 30; i++) {
-    const d = await fubGet<{ deals?: any[] }>(
-      apiKey,
-      `/deals?pipelineId=2&limit=100&offset=${offset}&sort=-updated`,
-      signal,
-    );
-    const deals = d.deals || [];
-    all.push(...deals);
-    if (deals.length < 100) break;
-    offset += 100;
-  }
-  return all;
+  return fubPaginate<any>(
+    apiKey,
+    `/deals?pipelineId=2&limit=100&sort=-updated`,
+    "deals",
+    undefined,
+    signal,
+    30,
+  );
 }
 
 export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<AcqFubData> {
