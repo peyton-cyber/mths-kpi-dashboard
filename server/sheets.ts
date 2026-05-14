@@ -717,6 +717,75 @@ export async function fetchAllKpiData() {
   // Track which section we're in (for logging projected deals)
   let currentSection = "";
 
+  // ================================================================
+  // SHEET SUMMARY ROWS — read directly so dashboard matches Rev Tracker
+  // ----------------------------------------------------------------
+  // The Rev Tracker has labeled summary rows per month that the team uses:
+  //   - "<Month> Actual"                    → funded (already closed)
+  //   - "<Month> assigned revenue"          → firm signed contracts for the month
+  //   - "<Month> soon assigned revenue"     → softer / likely deals
+  //   - "<Month> contracted but TBD revenue" → signed contracts, close date TBD
+  //   - "<Month> total possible revenue"    → grand total for the month
+  // These rows are the source of truth — we read them verbatim and expose them.
+  type MonthBuckets = {
+    actual: number;          // funded (closed)
+    assigned: number;        // "<Month> assigned revenue" row
+    soonAssigned: number;    // "<Month> soon assigned revenue" row
+    contractedTbd: number;   // "<Month> contracted but TBD revenue" row
+    totalPossible: number;   // "<Month> total possible revenue" row
+    tcFeeOnTotal: number;    // TC fee on total possible row (if present)
+  };
+  const monthBuckets: Record<string, MonthBuckets> = {};
+  const initBucket = (mk: string): MonthBuckets => {
+    if (!monthBuckets[mk]) {
+      monthBuckets[mk] = { actual: 0, assigned: 0, soonAssigned: 0, contractedTbd: 0, totalPossible: 0, tcFeeOnTotal: 0 };
+    }
+    return monthBuckets[mk];
+  };
+  // Parse summary rows from the rev tracker.
+  for (const row of revSheet.rows) {
+    const label = String(row["Deal"] || "").trim();
+    if (!label) continue;
+    const labelLower = label.toLowerCase();
+    const gross = parseMoney(row["Gross Revenue"]);
+    const tcFee = parseMoney(row["TC Fee"]);
+    // Match "<Month> Actual" — e.g. "April Actual", "May Actual"
+    // Match "<Month> assigned revenue", "<Month> soon assigned revenue", etc.
+    let matchedMonth = "";
+    for (let mi = 0; mi < MONTH_FULL.length; mi++) {
+      const full = MONTH_FULL[mi].toLowerCase();
+      const short = MONTH_SHORT[mi].toLowerCase();
+      if (labelLower.startsWith(full + " ") || labelLower.startsWith(short + " ")) {
+        matchedMonth = MONTH_SHORT[mi];
+        break;
+      }
+    }
+    if (!matchedMonth) continue;
+    const b = initBucket(matchedMonth);
+    if (labelLower.endsWith(" actual")) {
+      b.actual = gross + tcFee;
+    } else if (labelLower.includes("soon assigned revenue")) {
+      b.soonAssigned = gross + tcFee;
+    } else if (labelLower.includes("contracted but tbd revenue")) {
+      b.contractedTbd = gross + tcFee;
+    } else if (labelLower.includes("total possible revenue")) {
+      b.totalPossible = gross + tcFee;
+      b.tcFeeOnTotal = tcFee;
+    } else if (labelLower.includes("assigned revenue")) {
+      // Must come AFTER "soon assigned" check above
+      b.assigned = gross + tcFee;
+    } else if (labelLower.includes("contract revenue still likely")) {
+      // Row 103 in May — sometimes blank, fold into assigned if non-zero
+      b.assigned += gross + tcFee;
+    }
+  }
+  // Log what we found
+  const bucketLog = Object.entries(monthBuckets)
+    .filter(([_, b]) => b.actual > 0 || b.totalPossible > 0)
+    .map(([mk, b]) => `${mk}: actual=$${b.actual.toLocaleString()}, assigned=$${b.assigned.toLocaleString()}, soon=$${b.soonAssigned.toLocaleString()}, tbd=$${b.contractedTbd.toLocaleString()}, total=$${b.totalPossible.toLocaleString()}`)
+    .join(" | ");
+  if (bucketLog) console.log(`[sheets] Rev Tracker buckets: ${bucketLog}`);
+
   /** Classify a deal by name into a category (Phase 8 stage logic). */
   function classifyDeal(name: string): string {
     const n = String(name || "").toLowerCase();
@@ -1080,6 +1149,43 @@ export async function fetchAllKpiData() {
     }
   }
   console.log(`[sheets] Phase 8: Rev Tracker drives salesMonthly.revenue (FUNDED). activeMonths capped at idx ${_currentMonthIdx0} (${MONTH_SHORT[_currentMonthIdx0]}): [${activeMonths.join(", ")}]`);
+
+  // ================================================================
+  // SHEET-EXACT OVERRIDE — use Rev Tracker summary rows verbatim
+  // ----------------------------------------------------------------
+  // The Rev Tracker has labeled summary rows the team treats as the
+  // source of truth (e.g. "May total possible revenue" = $440,363).
+  // When monthBuckets has values for a month, those override the
+  // per-deal sums above so the dashboard matches the sheet penny-for-penny.
+  // ================================================================
+  (salesMonthly as any).revenue_soon_assigned = (salesMonthly as any).revenue_soon_assigned || {};
+  (salesMonthly as any).revenue_contracted_tbd = (salesMonthly as any).revenue_contracted_tbd || {};
+  (salesMonthly as any).revenue_total_possible = (salesMonthly as any).revenue_total_possible || {};
+  for (const mk of MONTH_SHORT) {
+    const b = monthBuckets[mk];
+    if (!b) continue;
+    if (b.totalPossible > 0 || b.actual > 0 || b.assigned > 0) {
+      // Funded (actual) — use sheet's row directly if present
+      if (b.actual > 0) salesMonthly.revenue[mk] = b.actual;
+      // Assigned firm — sheet's "assigned revenue" row
+      (salesMonthly as any).revenue_assigned[mk] = b.assigned;
+      // Soon assigned and contracted-but-TBD as separate buckets
+      (salesMonthly as any).revenue_soon_assigned[mk] = b.soonAssigned;
+      (salesMonthly as any).revenue_contracted_tbd[mk] = b.contractedTbd;
+      // Total possible (sheet's grand-total row)
+      const totalPossible = b.totalPossible > 0
+        ? b.totalPossible
+        : (b.actual + b.assigned + b.soonAssigned + b.contractedTbd);
+      (salesMonthly as any).revenue_total[mk] = totalPossible;
+      (salesMonthly as any).revenue_total_possible[mk] = totalPossible;
+      // Mark active if the month has any sheet activity and is not in the future
+      const mi = MONTH_SHORT.indexOf(mk);
+      if (mi <= _currentMonthIdx0 && totalPossible > 0 && !activeMonths.includes(mk)) {
+        activeMonths.push(mk);
+      }
+    }
+  }
+  console.log(`[sheets] Phase 8.1: applied Rev Tracker summary-row overrides for months with buckets.`);
 
   // ================================================================
   // Weekly Marketing month patch (Phase 6.1)
@@ -2962,6 +3068,7 @@ export async function fetchAllKpiData() {
     dealEconomics,
     pipelineForward,
     conversionFunnel,
+    monthBuckets,
     marketingSpendDetail,
     kpiOwnership,
     alerts: { redStreaks },

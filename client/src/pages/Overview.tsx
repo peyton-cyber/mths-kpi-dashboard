@@ -487,20 +487,34 @@ export default function Overview() {
                 status={statusFromTarget(q2Actual, q2Target / 3, true, 0.1)}
               />
               <StatRow
-                label={`${latestMonth} On the Board`}
-                value={fmtMoney((salesMonthly as any).revenue_total?.[latestMonth] ?? (salesMonthly.revenue[latestMonth] ?? 0))}
-                sub={`${(salesMonthly as any).closed_deals_total?.[latestMonth] ?? salesMonthly.closed_deals?.[latestMonth] ?? 0} total deals (funded + assigned)`}
+                label={`${latestMonth} Total Possible`}
+                value={fmtMoney((salesMonthly as any).revenue_total_possible?.[latestMonth] ?? (salesMonthly as any).revenue_total?.[latestMonth] ?? (salesMonthly.revenue[latestMonth] ?? 0))}
+                sub="Per Rev Tracker summary row"
               />
               <StatRow
-                label={`${latestMonth} Funded (in the bank)`}
+                label={`${latestMonth} Actual (funded)`}
                 value={fmtMoney(salesMonthly.revenue[latestMonth] ?? 0)}
-                sub={`${salesMonthly.closed_deals?.[latestMonth] ?? 0} deals closed on/before today`}
+                sub="Closed and in the bank"
               />
               {(((salesMonthly as any).revenue_assigned?.[latestMonth] ?? 0) > 0) && (
                 <StatRow
-                  label={`${latestMonth} Assigned (signed, not yet closed)`}
+                  label={`${latestMonth} Assigned`}
                   value={fmtMoney((salesMonthly as any).revenue_assigned?.[latestMonth] ?? 0)}
-                  sub={`${(salesMonthly as any).closed_deals_assigned?.[latestMonth] ?? 0} more scheduled to close later this month`}
+                  sub="Signed contracts, scheduled close"
+                />
+              )}
+              {(((salesMonthly as any).revenue_soon_assigned?.[latestMonth] ?? 0) > 0) && (
+                <StatRow
+                  label={`${latestMonth} Soon Assigned`}
+                  value={fmtMoney((salesMonthly as any).revenue_soon_assigned?.[latestMonth] ?? 0)}
+                  sub="Likely deals, softer commitments"
+                />
+              )}
+              {(((salesMonthly as any).revenue_contracted_tbd?.[latestMonth] ?? 0) > 0) && (
+                <StatRow
+                  label={`${latestMonth} Contracted (TBD close)`}
+                  value={fmtMoney((salesMonthly as any).revenue_contracted_tbd?.[latestMonth] ?? 0)}
+                  sub="Signed, close date TBD"
                 />
               )}
               <StatRow
