@@ -2728,6 +2728,8 @@ export async function fetchAllKpiData() {
     apptsAttended: number;
     offers: number;
     contracts: number;
+    contractsYtd?: number;
+    contractsByMonth?: Record<string, number>;
     avgTalkTime: number;
     avgTouchPoints: number;
     avgApptsSet: number;
@@ -2786,6 +2788,31 @@ export async function fetchAllKpiData() {
     acqRepsBySheet.set(canonical, { ...a, agent: canonical });
   }
 
+  // Rev Tracker per-rep deal count (YTD authoritative source). Maps sheet col headers
+  // ("Korbin", "Brandon", "Jeff Henry", "TJ", "Ryan Craig", "Jonathan Medlin") to
+  // canonical rep names. Each non-empty commission entry = one deal credited.
+  const SHEET_TO_CANONICAL: Record<string, string> = {
+    "Korbin": "Korbin",
+    "Brandon": "Brandon",
+    "Jeff Henry": "Jeff H",
+    "TJ": "TJ",
+    "Ryan Craig": "Ryan",
+    "Jonathan Medlin": "Jonathan",
+  };
+  const ytdDealsByRep: Record<string, number> = {
+    Korbin: 0, Brandon: 0, "Jeff H": 0, TJ: 0, Ryan: 0, Jonathan: 0,
+  };
+  const monthlyDealsByRep: Record<string, Record<string, number>> = {
+    Korbin: {}, Brandon: {}, "Jeff H": {}, TJ: {}, Ryan: {}, Jonathan: {},
+  };
+  for (const [sheetName, canonical] of Object.entries(SHEET_TO_CANONICAL)) {
+    const byMonth = perAgentDealCountByMonth[sheetName] || {};
+    for (const [mk, cnt] of Object.entries(byMonth)) {
+      ytdDealsByRep[canonical] += cnt;
+      monthlyDealsByRep[canonical][mk] = (monthlyDealsByRep[canonical][mk] || 0) + cnt;
+    }
+  }
+
   // Merge: prefer FUB data for the 6 reporting reps, keep sheet-only fields
   // (drive/windshield time) where available.
   const mergedAgents: AcqAgent[] = [];
@@ -2803,11 +2830,14 @@ export async function fetchAllKpiData() {
       apptsAttended: fubRep.apptsExecuted,
       offers: fubRep.offersMade,
       contracts: fubRep.contracts,
+      // YTD from Rev Tracker (authoritative cross-check, includes Novations/Flips/Listings)
+      contractsYtd: ytdDealsByRep[fubRep.agent] || 0,
+      contractsByMonth: monthlyDealsByRep[fubRep.agent] || {},
       avgTalkTime: days > 0 ? Math.round(fubRep.talkTimeMin / days) : 0,
       avgTouchPoints: days > 0 ? Math.round(fubRep.callCount / days) : 0,
       avgApptsSet: days > 0 ? Math.round((fubRep.apptsSet / days) * 10) / 10 : 0,
       target: acqTargetByAgent[fubRep.agent] || acqTargetByAgent[sheetRep?.agent || ""],
-    };
+    } as AcqAgent & { contractsYtd: number; contractsByMonth: Record<string, number> };
     mergedAgents.push(merged);
   }
   // Include any sheet agents that aren't in the FUB 6-rep list (e.g. legacy)

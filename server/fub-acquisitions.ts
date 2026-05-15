@@ -180,6 +180,42 @@ async function fetchDispoPipelineDeals(apiKey: string, signal?: AbortSignal) {
   );
 }
 
+// Novations (pipeline 3): Jeff H & Jonathan run a lot of these. Each entry counts as a contract.
+async function fetchNovationsDeals(apiKey: string, signal?: AbortSignal) {
+  return fubPaginate<any>(
+    apiKey,
+    `/deals?pipelineId=3&limit=100&sort=-updated`,
+    "deals",
+    undefined,
+    signal,
+    30,
+  );
+}
+
+// Flips (pipeline 25)
+async function fetchFlipsDeals(apiKey: string, signal?: AbortSignal) {
+  return fubPaginate<any>(
+    apiKey,
+    `/deals?pipelineId=25&limit=100&sort=-updated`,
+    "deals",
+    undefined,
+    signal,
+    30,
+  );
+}
+
+// Listing Referrals (pipeline 27)
+async function fetchListingReferralsDeals(apiKey: string, signal?: AbortSignal) {
+  return fubPaginate<any>(
+    apiKey,
+    `/deals?pipelineId=27&limit=100&sort=-updated`,
+    "deals",
+    undefined,
+    signal,
+    30,
+  );
+}
+
 export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<AcqFubData> {
   const fetchedAt = new Date().toISOString();
   const empty: AcqFubData = {
@@ -207,11 +243,14 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
     const startISO = start.toISOString();
     const endISO = now.toISOString();
 
-    const [appts, calls, aqDeals, dispoDeals] = await Promise.all([
+    const [appts, calls, aqDeals, dispoDeals, novationDeals, flipDeals, listingReferralDeals] = await Promise.all([
       fetchAllAppointments(apiKey, startISO, endISO, controller.signal),
       fetchRecentCalls(apiKey, startISO, controller.signal),
       fetchAqPipelineDeals(apiKey, controller.signal),
       fetchDispoPipelineDeals(apiKey, controller.signal),
+      fetchNovationsDeals(apiKey, controller.signal),
+      fetchFlipsDeals(apiKey, controller.signal),
+      fetchListingReferralsDeals(apiKey, controller.signal),
     ]);
     clearTimeout(timer);
 
@@ -344,6 +383,37 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
         }
       } else {
         teamContractsFallback += 1;
+      }
+    }
+
+    // ----- Novations / Flips / Listing Referrals: count each deal as a contract
+    // for any rep on the deal whose enteredStageAt or earliest activity is in window.
+    // Jeff H & Jonathan close a meaningful share of these — without them they show 0.
+    const sideDeals = [...novationDeals, ...flipDeals, ...listingReferralDeals];
+    for (const d of sideDeals) {
+      const enteredStageAt = d.enteredStageAt ? new Date(d.enteredStageAt).getTime() : 0;
+      const created = d.created ? new Date(d.created).getTime() : 0;
+      const ucStr = d.customUnderContractDate;
+      const ucMs = ucStr ? new Date(ucStr).getTime() : 0;
+      const dealDate = ucMs || enteredStageAt || created;
+      if (dealDate < cutoffMs) continue;
+      const users: any[] = d.users || [];
+      const repsOnDeal = new Set<string>();
+      for (const u of users) {
+        let canonical: string | null = null;
+        if (u.id && REP_BY_ID.has(u.id)) canonical = REP_BY_ID.get(u.id) || null;
+        if (!canonical) canonical = canonicalFromName(u.name);
+        if (canonical) repsOnDeal.add(canonical);
+      }
+      if (repsOnDeal.size > 0) {
+        // Credit ONE primary AQ rep per deal (lowest userId = original acquirer)
+        const primary = users
+          .filter((u: any) => u.id && REP_BY_ID.has(u.id))
+          .sort((a: any, b: any) => (a.id || 0) - (b.id || 0))[0];
+        if (primary?.id) {
+          const canonical = REP_BY_ID.get(primary.id);
+          if (canonical) statsByRep[canonical].contracts += 1;
+        }
       }
     }
 

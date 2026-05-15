@@ -96,7 +96,8 @@ export default function AcqScorecard() {
       make("Windshield", "total min", r => ({ value: r.windshieldTime })),
       make("Appts Attended", undefined, r => ({ value: r.apptsAttended })),
       make("Offers Made", undefined, r => ({ value: r.offers })),
-      make("Contracts", undefined, r => ({ value: r.contracts, bold: true })),
+      make("Contracts (30d)", "FUB AQ pipeline", r => ({ value: r.contracts, bold: true })),
+      make("Contracts YTD", "Rev Tracker (all pipelines)", r => ({ value: (r as any).contractsYtd ?? r.contracts, bold: true })),
       make("Marketing Spend", undefined, r => ({ value: r.spend > 0 ? fmtMoney(r.spend) : "—" })),
       make("ROAS", "profit per $", r => ({
         value: r.roas > 0 ? `${r.roas.toFixed(2)}x` : "—",
