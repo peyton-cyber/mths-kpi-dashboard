@@ -784,26 +784,35 @@ export async function fetchAllKpiData() {
     const isSummary = !closeDateRaw; // summary rows have no close date
     if (!isSummary) continue;
     const b = initBucket(matchedMonth);
-    // "<Month>" bare or "<Month> Actual" → funded actual for that month
-    if (labelLower === matchedMonth.toLowerCase() ||
-        labelLower === MONTH_FULL[MONTH_SHORT.indexOf(matchedMonth)].toLowerCase() ||
-        labelLower.endsWith(" actual")) {
+    // Order matters — check most specific patterns first.
+    // ----- 1. Total possible (catches "total possible" anywhere)
+    if (labelLower.includes("total possible")) {
+      b.totalPossible = gross + tcFee;
+      b.tcFeeOnTotal = tcFee;
+    }
+    // ----- 2. Contracted but TBD (any "tbd" with "contract")
+    else if (labelLower.includes("tbd") && labelLower.includes("contract")) {
+      b.contractedTbd = gross + tcFee;
+    }
+    // ----- 3. Soon assigned (catch both "soon assigned" and "soon to be assigned")
+    else if (labelLower.includes("soon") && labelLower.includes("assign")) {
+      b.soonAssigned = gross + tcFee;
+    }
+    // ----- 4. "contracts still likely" / "contract revenue still likely" — fold into assigned
+    else if (labelLower.includes("still likely")) {
+      b.assigned += gross + tcFee;
+    }
+    // ----- 5. Assigned (any "assign" — must come AFTER soon-assigned check)
+    else if (labelLower.includes("assign")) {
+      b.assigned += gross + tcFee;
+    }
+    // ----- 6. Bare month name or "<Month> Actual" → funded actual
+    else if (labelLower === matchedMonth.toLowerCase() ||
+             labelLower === MONTH_FULL[MONTH_SHORT.indexOf(matchedMonth)].toLowerCase() ||
+             labelLower.endsWith(" actual")) {
       b.actual = gross + tcFee;
       // For prior-month "Actual" rows, also use as totalPossible (no forecast exists)
       if (b.totalPossible === 0) b.totalPossible = gross + tcFee;
-    } else if (labelLower.includes("soon assigned revenue") || labelLower.includes("soon assign")) {
-      b.soonAssigned = gross + tcFee;
-    } else if (labelLower.includes("contracted but tbd revenue") || labelLower.includes("contracted but tbd")) {
-      b.contractedTbd = gross + tcFee;
-    } else if (labelLower.includes("total possible revenue") || labelLower.includes("total possible")) {
-      b.totalPossible = gross + tcFee;
-      b.tcFeeOnTotal = tcFee;
-    } else if (labelLower.includes("assigned revenue") || labelLower.includes("assigned")) {
-      // Must come AFTER "soon assigned" check above
-      b.assigned = gross + tcFee;
-    } else if (labelLower.includes("contract revenue still likely") || labelLower.includes("contract revenue still")) {
-      // Sometimes blank, fold into assigned if non-zero
-      b.assigned += gross + tcFee;
     }
   }
   // Log what we found
