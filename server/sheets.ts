@@ -562,14 +562,22 @@ export async function fetchAllKpiData() {
     if (!rowName) return out;
     const parsed = parseGoalFromRowName(rowName);
     if (!parsed) return out;
+    const curIdx = _now.getMonth(); // 0..11
     if (parsed.month) {
-      // Goal explicitly tagged for this month — only set that month
-      out[parsed.month] = parsed.value;
+      // Goal explicitly tagged for a month — set that month AND carry forward
+      // to all months from that point through the current month as a sensible
+      // default until the team updates the sheet's "for <Month>" tag.
+      const tagIdx = SHORT_MONTHS.indexOf(parsed.month);
+      if (tagIdx >= 0) {
+        for (let i = tagIdx; i <= Math.max(tagIdx, curIdx); i++) {
+          out[SHORT_MONTHS[i]] = parsed.value;
+        }
+      } else {
+        out[parsed.month] = parsed.value;
+      }
     } else {
       // No month tag — treat goal as applying to the current month and earlier
-      // ones that have actuals. We do NOT assume future months share the goal
-      // (user's rule: "Hide pace dots until target is set").
-      const curIdx = _now.getMonth(); // 0..11
+      // ones that have actuals.
       for (let i = 0; i <= curIdx; i++) out[SHORT_MONTHS[i]] = parsed.value;
     }
     return out;
@@ -648,11 +656,19 @@ export async function fetchAllKpiData() {
   console.log(`[sheets] Monthly revenue goals (${sprintGoalsList.length} sprint(s) found, * = from Asana): ${goalSrc}`);
 
   // Gross Profit goals — derive from active sprint when available, else mirror revenue goal
+  // discounted by an assumed margin so charts don't render empty.
   const activeSprint = sprintsByQ.get(_currentQuarter);
   const monthlyGrossProfitGoals: Record<string, number> = {};
   if (activeSprint) {
     for (const [m, v] of Object.entries(activeSprint.monthlyRevenue)) {
       monthlyGrossProfitGoals[m] = v;
+    }
+  } else {
+    // Fallback: assume 70% gross-profit margin on the revenue goal
+    const MARGIN = 0.70;
+    for (const m of ALL_MONTHS) {
+      const rev = monthlyRevenueGoals[m] || 0;
+      monthlyGrossProfitGoals[m] = Math.round(rev * MARGIN);
     }
   }
 
@@ -755,27 +771,38 @@ export async function fetchAllKpiData() {
     for (let mi = 0; mi < MONTH_FULL.length; mi++) {
       const full = MONTH_FULL[mi].toLowerCase();
       const short = MONTH_SHORT[mi].toLowerCase();
-      if (labelLower.startsWith(full + " ") || labelLower.startsWith(short + " ")) {
+      // Match "January" exact, "January Actual", "Jan total possible revenue", etc.
+      if (labelLower === full || labelLower === short ||
+          labelLower.startsWith(full + " ") || labelLower.startsWith(short + " ")) {
         matchedMonth = MONTH_SHORT[mi];
         break;
       }
     }
     if (!matchedMonth) continue;
+    // Skip per-deal rows (have a date in Close Date col A) — only summary rows have empty close date
+    const closeDateRaw = String(row["Close Date"] || "").trim();
+    const isSummary = !closeDateRaw; // summary rows have no close date
+    if (!isSummary) continue;
     const b = initBucket(matchedMonth);
-    if (labelLower.endsWith(" actual")) {
+    // "<Month>" bare or "<Month> Actual" → funded actual for that month
+    if (labelLower === matchedMonth.toLowerCase() ||
+        labelLower === MONTH_FULL[MONTH_SHORT.indexOf(matchedMonth)].toLowerCase() ||
+        labelLower.endsWith(" actual")) {
       b.actual = gross + tcFee;
-    } else if (labelLower.includes("soon assigned revenue")) {
+      // For prior-month "Actual" rows, also use as totalPossible (no forecast exists)
+      if (b.totalPossible === 0) b.totalPossible = gross + tcFee;
+    } else if (labelLower.includes("soon assigned revenue") || labelLower.includes("soon assign")) {
       b.soonAssigned = gross + tcFee;
-    } else if (labelLower.includes("contracted but tbd revenue")) {
+    } else if (labelLower.includes("contracted but tbd revenue") || labelLower.includes("contracted but tbd")) {
       b.contractedTbd = gross + tcFee;
-    } else if (labelLower.includes("total possible revenue")) {
+    } else if (labelLower.includes("total possible revenue") || labelLower.includes("total possible")) {
       b.totalPossible = gross + tcFee;
       b.tcFeeOnTotal = tcFee;
-    } else if (labelLower.includes("assigned revenue")) {
+    } else if (labelLower.includes("assigned revenue") || labelLower.includes("assigned")) {
       // Must come AFTER "soon assigned" check above
       b.assigned = gross + tcFee;
-    } else if (labelLower.includes("contract revenue still likely")) {
-      // Row 103 in May — sometimes blank, fold into assigned if non-zero
+    } else if (labelLower.includes("contract revenue still likely") || labelLower.includes("contract revenue still")) {
+      // Sometimes blank, fold into assigned if non-zero
       b.assigned += gross + tcFee;
     }
   }
@@ -1085,13 +1112,14 @@ export async function fetchAllKpiData() {
   const conversionFunnel = {
     windowDays: fubWindowDays,
     source: acqFub.error ? "error" : "fub+revtracker",
+    note: "Each stage counts events in the same window. Funded vs Contracts are different cohorts — funded deals were typically contracted 30-60 days earlier, so the % from Contracts to Funded reflects historical close rate, not this window's pipeline.",
     stages: [
       { label: "Calls",       value: tCalls,        fromPrev: null,                              fromTop: 100 },
       { label: "Appts Set",   value: tApptsSet,     fromPrev: pct(tApptsSet, tCalls),            fromTop: pct(tApptsSet, tCalls) },
       { label: "Appts Attended", value: tApptsExec, fromPrev: pct(tApptsExec, tApptsSet),       fromTop: pct(tApptsExec, tCalls) },
       { label: "Offers Made", value: tOffers,       fromPrev: pct(tOffers, tApptsExec),          fromTop: pct(tOffers, tCalls) },
       { label: "Contracts",   value: tContracts,    fromPrev: pct(tContracts, tOffers),          fromTop: pct(tContracts, tCalls) },
-      { label: "Funded Deals", value: fundedInWindow, fromPrev: pct(fundedInWindow, tContracts), fromTop: pct(fundedInWindow, tCalls) },
+      { label: "Funded Deals", value: fundedInWindow, fromPrev: null /* different cohort — don't show misleading % */, fromTop: pct(fundedInWindow, tCalls) },
     ],
     fubError: acqFub.error,
   };

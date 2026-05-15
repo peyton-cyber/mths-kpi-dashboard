@@ -181,15 +181,23 @@ export async function fetchDispoFubData(apiKey: string): Promise<DispoFubData> {
     clearTimeout(timer);
 
     // Stage breakdown of currently active dispo deals (NOT yet closed)
+    // YTD filter for closed count — only deals closed in the current calendar year.
     const stageMap = new Map<string, { count: number; totalPrice: number }>();
     let activeCount = 0;
-    let closedCount = 0;
+    let closedCount = 0; // YTD only
+    const yearStart = new Date(new Date().getFullYear(), 0, 1).getTime();
 
     for (const deal of dispoDeals) {
       const stage = deal.stageName || "Unknown";
       const isClosed = stage.toLowerCase().includes("closed");
       if (isClosed) {
-        closedCount++;
+        // Only count if closed THIS year. Use enteredStageAt (when deal entered Closed),
+        // falling back to customUnderContractDate, projectedCloseDate, then createdAt.
+        const dateRaw = deal.enteredStageAt || deal.customUnderContractDate || deal.projectedCloseDate || deal.createdAt;
+        if (dateRaw) {
+          const dt = new Date(dateRaw).getTime();
+          if (!isNaN(dt) && dt >= yearStart) closedCount++;
+        }
       } else {
         activeCount++;
         const cur = stageMap.get(stage) || { count: 0, totalPrice: 0 };
@@ -211,7 +219,12 @@ export async function fetchDispoFubData(apiKey: string): Promise<DispoFubData> {
       const cur = ownerMap.get(owner) || { active: 0, closed: 0, assignedRev: 0 };
       const stage = (deal.stageName || "").toLowerCase();
       if (stage.includes("closed")) {
-        cur.closed++;
+        // YTD filter — only count deals closed this year
+        const dateRaw = deal.enteredStageAt || deal.customUnderContractDate || deal.projectedCloseDate || deal.createdAt;
+        if (dateRaw) {
+          const dt = new Date(dateRaw).getTime();
+          if (!isNaN(dt) && dt >= yearStart) cur.closed++;
+        }
       } else {
         cur.active++;
       }
