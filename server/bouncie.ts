@@ -16,9 +16,13 @@ const REP_BY_IMEI: Record<string, string> = {
 
 let cachedAccessToken: string | null = null;
 let cachedAccessExpiresAt = 0;
+// Bouncie rotates refresh tokens on every refresh call. We hold the latest one
+// in process memory so subsequent refreshes within the same process work even
+// before the env var is updated. The env var is only the *seed* for cold starts.
+let currentRefreshToken: string | null = null;
 
 async function refreshAccessToken(): Promise<string | null> {
-  const refreshToken = process.env.BOUNCIE_REFRESH_TOKEN;
+  const refreshToken = currentRefreshToken || process.env.BOUNCIE_REFRESH_TOKEN || null;
   const clientId = process.env.BOUNCIE_CLIENT_ID;
   const clientSecret = process.env.BOUNCIE_CLIENT_SECRET;
   if (!refreshToken || !clientId || !clientSecret) {
@@ -26,16 +30,19 @@ async function refreshAccessToken(): Promise<string | null> {
     return null;
   }
   try {
+    // Bouncie's OAuth server REQUIRES application/x-www-form-urlencoded body
+    // (RFC 6749). Sending JSON returns invalid_grant 403.
+    const params = new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      redirect_uri: "https://mths-kpi-api.onrender.com/api/bouncie/callback",
+    });
     const resp = await fetch(BOUNCIE_TOKEN_URL, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: clientId,
-        client_secret: clientSecret,
-        grant_type: "refresh_token",
-        refresh_token: refreshToken,
-        redirect_uri: "https://mths-kpi-api.onrender.com/api/bouncie/callback",
-      }),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params.toString(),
     });
     if (!resp.ok) {
       console.warn(`[bouncie] refresh failed ${resp.status}: ${await resp.text()}`);
@@ -44,9 +51,11 @@ async function refreshAccessToken(): Promise<string | null> {
     const j: any = await resp.json();
     cachedAccessToken = j.access_token;
     cachedAccessExpiresAt = Date.now() + (j.expires_in || 3600) * 1000 - 60_000;
-    // If a new refresh token was issued, surface it so we can rotate
+    // Bouncie rotates refresh tokens — keep the latest one in memory so the next
+    // refresh in this process works. Persisting to env requires a redeploy.
     if (j.refresh_token && j.refresh_token !== refreshToken) {
-      console.log("[bouncie] new refresh token issued — update BOUNCIE_REFRESH_TOKEN env var");
+      currentRefreshToken = j.refresh_token;
+      console.log(`[bouncie] refresh token rotated (in-memory). To persist across deploys, update BOUNCIE_REFRESH_TOKEN env var to: ${j.refresh_token}`);
     }
     return cachedAccessToken;
   } catch (e: any) {
