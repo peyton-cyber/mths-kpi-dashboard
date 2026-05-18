@@ -12,6 +12,7 @@ import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter
 import { useKpi } from "@/components/KpiDataProvider";
 import { AlertBanner } from "@/components/AlertBanner";
 import { LiveFieldActivity } from "@/components/LiveFieldActivity";
+import { LiveRepMap } from "@/components/LiveRepMap";
 import {
   fmtPct,
   fmtMoney,
@@ -302,7 +303,7 @@ export default function Acquisitions() {
       <AlertBanner filterPersons={["Korbin", "TJ", "Ryan", "Brandon", "Jeff", "Jonathan"]} />
 
       {/* Live AQ field activity — map + windshield time. Stub data until Bouncie is wired. */}
-      <LiveFieldActivity data={(data as any)?.fieldActivity} />
+      <LiveRepMap />
 
       {isFallback && (
         <div className="rounded-lg border border-status-yellow/40 bg-status-yellow/5 px-4 py-2.5 text-[13px] text-muted-foreground">

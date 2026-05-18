@@ -79,12 +79,27 @@ export interface BouncieRepStats {
   hardAccels: number;
 }
 
+export interface BouncieLocation {
+  rep: string;
+  imei: string;
+  vehicle: string;       // e.g. "Ford F-150 2025"
+  lat: number;
+  lng: number;
+  heading: number;       // degrees 0-360
+  speed: number;         // mph (Bouncie returns mph in US accounts)
+  isRunning: boolean;
+  fuelLevel: number;     // percent 0-100
+  odometer: number;
+  lastUpdated: string;   // ISO timestamp
+}
+
 export interface BouncieData {
   fetchedAt: string;
   windowDays: number;
   reps: BouncieRepStats[];
   vehiclesConnected: number;
   unmappedRepsNote: string[];
+  locations: BouncieLocation[];
 }
 
 export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
@@ -95,6 +110,7 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
     reps: [],
     vehiclesConnected: 0,
     unmappedRepsNote: ["Brandon", "Jeff H", "Ryan", "Jonathan"],
+    locations: [],
   };
   const token = await getAccessToken();
   if (!token) return empty;
@@ -116,6 +132,7 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
   const startsAfter = new Date(Date.now() - windowDays * 24 * 3600 * 1000).toISOString();
   const repStats: Record<string, BouncieRepStats> = {};
 
+  const locations: BouncieLocation[] = [];
   for (const v of vehicles) {
     const imei: string = v.imei;
     const rep = REP_BY_IMEI[imei];
@@ -126,6 +143,23 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
         tripCount: 0, driveTimeMin: 0, idleTimeMin: 0, totalTimeMin: 0,
         distanceMi: 0, hardBrakes: 0, hardAccels: 0,
       };
+    }
+    // Capture live location from /vehicles stats block
+    const loc = v?.stats?.location;
+    if (loc?.lat != null && loc?.lon != null) {
+      locations.push({
+        rep,
+        imei,
+        vehicle: `${v?.model?.make || ""} ${v?.model?.name || ""} ${v?.model?.year || ""}`.trim(),
+        lat: Number(loc.lat),
+        lng: Number(loc.lon),
+        heading: Number(loc.heading || 0),
+        speed: Number(v?.stats?.speed || 0),
+        isRunning: Boolean(v?.stats?.isRunning),
+        fuelLevel: Math.round(Number(v?.stats?.fuelLevel || 0)),
+        odometer: Math.round(Number(v?.stats?.odometer || 0)),
+        lastUpdated: v?.stats?.lastUpdated || fetchedAt,
+      });
     }
     try {
       const url = `${BOUNCIE_API}/trips?imei=${imei}&starts-after=${encodeURIComponent(startsAfter)}&gpsFormat=polyline`;
@@ -170,5 +204,6 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
     unmappedRepsNote: ["Brandon", "Jeff H", "Ryan", "Jonathan"].filter(
       r => !Object.values(REP_BY_IMEI).includes(r)
     ),
+    locations,
   };
 }

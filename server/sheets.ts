@@ -356,6 +356,7 @@ export async function fetchAllKpiData() {
         reps: [],
         vehiclesConnected: 0,
         unmappedRepsNote: ["Brandon", "Jeff H", "Ryan", "Jonathan"],
+        locations: [],
       };
     }),
   ]);
@@ -3293,6 +3294,7 @@ export async function fetchAllKpiData() {
       unmappedReps: bouncie.unmappedRepsNote,
       fetchedAt: bouncie.fetchedAt,
       isReal: bouncie.reps.length > 0,
+      locations: bouncie.locations,
     },
     leadSources: leadSourcesData,
     daysToClose,
