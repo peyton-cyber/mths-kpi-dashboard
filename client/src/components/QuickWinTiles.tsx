@@ -216,3 +216,100 @@ export function DataFreshnessBanner() {
     </div>
   );
 }
+
+const MONTH_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+/**
+ * YoYTile — 2025 vs 2026 revenue tracker comparison.
+ * Shows YTD same-months delta + month-by-month bars.
+ */
+export function YoYTile() {
+  const data = useKpi();
+  const yoy = data.revenueTrackerYoY;
+  if (!yoy) return null;
+  const { year2025, year2026, comparison } = yoy;
+  const months = MONTH_ORDER.filter(m =>
+    (year2025.monthlyActuals[m] || 0) > 0 || (year2026.monthlyActuals[m] || 0) > 0
+  );
+  const maxVal = Math.max(
+    1,
+    ...months.map(m => Math.max(year2025.monthlyActuals[m] || 0, year2026.monthlyActuals[m] || 0))
+  );
+  const deltaPositive = comparison.deltaYtdRevenue >= 0;
+  const deltaColor = deltaPositive ? "hsl(var(--status-green))" : "hsl(var(--status-red))";
+
+  return (
+    <Section
+      title="2026 vs 2025 — Year-Over-Year"
+      subtitle={`YTD comparison across ${comparison.monthsCompared.length || 0} months with 2026 actuals`}
+    >
+      <Card>
+        {/* Headline metrics */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4 pb-4 border-b" style={{ borderColor: "hsl(var(--border))" }}>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">2026 YTD</div>
+            <div className="text-lg font-bold">{fmtMoney(year2026.ytdRevenue)}</div>
+            <div className="text-[11px] text-muted-foreground">{year2026.ytdDeals} deals</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">2025 (same months)</div>
+            <div className="text-lg font-bold">{fmtMoney(comparison.ytd2025SameMonths)}</div>
+            <div className="text-[11px] text-muted-foreground">{comparison.ytd2025DealsSameMonths} deals</div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Δ Revenue</div>
+            <div className="text-lg font-bold" style={{ color: deltaColor }}>
+              {deltaPositive ? "+" : ""}{fmtMoney(comparison.deltaYtdRevenue)}
+            </div>
+            <div className="text-[11px]" style={{ color: deltaColor }}>
+              {deltaPositive ? "+" : ""}{comparison.deltaYtdPct.toFixed(1)}%
+            </div>
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Δ Deals</div>
+            <div className="text-lg font-bold" style={{ color: comparison.deltaYtdDeals >= 0 ? "hsl(var(--status-green))" : "hsl(var(--status-red))" }}>
+              {comparison.deltaYtdDeals >= 0 ? "+" : ""}{comparison.deltaYtdDeals}
+            </div>
+            <div className="text-[11px] text-muted-foreground">vs 2025 same months</div>
+          </div>
+        </div>
+
+        {/* Reference totals */}
+        <div className="text-[11px] text-muted-foreground mb-3">
+          2025 Full Year: <span className="font-semibold text-foreground">{fmtMoney(year2025.ytdRevenue)}</span> ({year2025.ytdDeals} deals)
+        </div>
+
+        {/* Monthly bars */}
+        <div className="space-y-2">
+          {months.map(m => {
+            const v2025 = year2025.monthlyActuals[m] || 0;
+            const v2026 = year2026.monthlyActuals[m] || 0;
+            const w2025 = (v2025 / maxVal) * 100;
+            const w2026 = (v2026 / maxVal) * 100;
+            return (
+              <div key={m} className="grid grid-cols-[40px_1fr] gap-2 items-center text-[11px]">
+                <div className="font-semibold text-muted-foreground">{m}</div>
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <div className="text-[10px] text-muted-foreground w-10">2025</div>
+                    <div className="flex-1 h-3 rounded" style={{ background: "hsl(var(--muted) / 0.4)" }}>
+                      <div className="h-full rounded" style={{ width: `${w2025}%`, background: "hsl(var(--muted-foreground) / 0.5)" }} />
+                    </div>
+                    <div className="num text-muted-foreground w-20 text-right">{v2025 > 0 ? fmtMoney(v2025) : "—"}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="text-[10px] text-muted-foreground w-10">2026</div>
+                    <div className="flex-1 h-3 rounded" style={{ background: "hsl(var(--muted) / 0.4)" }}>
+                      <div className="h-full rounded" style={{ width: `${w2026}%`, background: "hsl(var(--primary))" }} />
+                    </div>
+                    <div className="num font-semibold w-20 text-right">{v2026 > 0 ? fmtMoney(v2026) : "—"}</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </Section>
+  );
+}

@@ -195,6 +195,18 @@ export interface KpiData {
     projectedYearTotal: number;
     ytdActualRevenue: number;
   };
+  revenueTrackerYoY?: {
+    year2025: { monthlyActuals: Record<string, number>; monthlyDeals: Record<string, number>; ytdRevenue: number; ytdDeals: number };
+    year2026: { monthlyActuals: Record<string, number>; monthlyDeals: Record<string, number>; ytdRevenue: number; ytdDeals: number };
+    comparison: {
+      monthsCompared: string[];
+      ytd2025SameMonths: number;
+      ytd2025DealsSameMonths: number;
+      deltaYtdRevenue: number;
+      deltaYtdPct: number;
+      deltaYtdDeals: number;
+    };
+  };
   revenueFunnel: {
     annual_profit_goal: number;
     monthly_profit_goal: number;

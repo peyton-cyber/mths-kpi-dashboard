@@ -13,7 +13,7 @@ import {
 import { KpiTooltip, KPI_NOTES, isRedStreak } from "@/components/KpiTooltip";
 import { CashConversionCycleSection } from "@/components/CashConversionCycle";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
-import { DataFreshnessBanner } from "@/components/QuickWinTiles";
+import { DataFreshnessBanner, YoYTile } from "@/components/QuickWinTiles";
 import { useKpi } from "@/components/KpiDataProvider";
 import {
   fmtMoney,
@@ -437,6 +437,9 @@ export default function Overview() {
       </PageHeader>
 
       <DataFreshnessBanner />
+
+      {/* 2026 vs 2025 YoY comparison */}
+      <YoYTile />
 
       {/* Fallback notice */}
       {isFallback && (

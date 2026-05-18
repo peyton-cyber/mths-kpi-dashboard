@@ -271,6 +271,7 @@ export async function fetchAllKpiData() {
       { label: "capacity", spreadsheetId: TC_TRACKER, sheetName: "Capacity Oversight Dashboard" },
       { label: "tx", spreadsheetId: TC_TRACKER, sheetName: "Transactions" },
       { label: "rev", spreadsheetId: COMPANY_FINANCIALS, sheetName: "2026 Revenue Tracker" },
+      { label: "rev2025", spreadsheetId: COMPANY_FINANCIALS, sheetName: "2025 Revenue Tracker" },
       { label: "salesKpis", spreadsheetId: MASTER_KPIS, sheetName: "Sales 2026 KPIs" },
       { label: "dispo", spreadsheetId: MASTER_KPIS, sheetName: "Dispo 2026 KPIs" },
       { label: "pipeRisk", spreadsheetId: TC_TRACKER, sheetName: "Pipeline & Risk Dashboard" },
@@ -2286,6 +2287,73 @@ export async function fetchAllKpiData() {
   };
 
   // ================================================================
+  // 9b. YEAR-OVER-YEAR — 2025 vs 2026 Revenue Tracker
+  //     Reads labeled summary rows ("<Month> Actual") from 2025 Revenue Tracker tab
+  //     and computes deltas vs 2026 monthlyActuals.
+  // ================================================================
+  const rev2025Sheet = sheets.rev2025 || { headers: [], rows: [], rowCount: 0 };
+  const monthly2025Actuals: Record<string, number> = {};
+  const monthly2025Deals: Record<string, number> = {};
+  // currentSection2025 tracks which month-section we're in so we can count
+  // non-summary deal rows per month.
+  let currentSection2025 = "";
+  for (const row of rev2025Sheet.rows) {
+    const label = String(row["Deal"] || "").trim();
+    if (!label) continue;
+    const labelLower = label.toLowerCase();
+    const closeDateRaw = String(row["Close Date"] || "").trim();
+    const isSummary = !closeDateRaw;
+    const gross = parseMoney(row["Gross Revenue"]);
+
+    // Detect month-section boundaries (any label starting with a month name)
+    let matchedMonth = "";
+    for (let mi = 0; mi < MONTH_FULL.length; mi++) {
+      const full = MONTH_FULL[mi].toLowerCase();
+      const short = MONTH_SHORT[mi].toLowerCase();
+      if (labelLower === full || labelLower === short ||
+          labelLower.startsWith(full + " ") || labelLower.startsWith(short + " ")) {
+        matchedMonth = MONTH_SHORT[mi];
+        break;
+      }
+    }
+    if (matchedMonth) currentSection2025 = matchedMonth;
+
+    if (isSummary && matchedMonth && labelLower.endsWith(" actual")) {
+      // "January Actual" → take Gross Revenue from column C
+      monthly2025Actuals[matchedMonth] = gross;
+      continue;
+    }
+    // Per-deal row: count it under the current section, only if it has a real close date
+    if (!isSummary && currentSection2025) {
+      monthly2025Deals[currentSection2025] = (monthly2025Deals[currentSection2025] || 0) + 1;
+    }
+  }
+  const ytd2025Revenue = Object.values(monthly2025Actuals).reduce((s, v) => s + v, 0);
+  const ytd2025Deals = Object.values(monthly2025Deals).reduce((s, v) => s + v, 0);
+  const ytd2026Revenue = revenueTracker.ytdActualRevenue;
+  const ytd2026Deals = Object.values(closedDealsByMonth).reduce((s, v) => s + v, 0);
+  // 2026 YTD vs same months in 2025 — only compare months that have 2026 actuals.
+  const months2026WithActuals = Object.keys(revenueActuals).filter(m => (revenueActuals[m] || 0) > 0);
+  const ytd2025SameMonths = months2026WithActuals.reduce((s, m) => s + (monthly2025Actuals[m] || 0), 0);
+  const ytd2025DealsSameMonths = months2026WithActuals.reduce((s, m) => s + (monthly2025Deals[m] || 0), 0);
+  const deltaYtdRevenue = ytd2026Revenue - ytd2025SameMonths;
+  const deltaYtdPct = ytd2025SameMonths > 0 ? (deltaYtdRevenue / ytd2025SameMonths) * 100 : 0;
+  const deltaYtdDeals = ytd2026Deals - ytd2025DealsSameMonths;
+  const revenueTrackerYoY = {
+    year2025: { monthlyActuals: monthly2025Actuals, monthlyDeals: monthly2025Deals, ytdRevenue: ytd2025Revenue, ytdDeals: ytd2025Deals },
+    year2026: { monthlyActuals: revenueActuals,     monthlyDeals: closedDealsByMonth,  ytdRevenue: ytd2026Revenue, ytdDeals: ytd2026Deals },
+    comparison: {
+      monthsCompared: months2026WithActuals,
+      ytd2025SameMonths,
+      ytd2025DealsSameMonths,
+      deltaYtdRevenue,
+      deltaYtdPct,
+      deltaYtdDeals,
+    },
+  };
+  console.log(`[sheets] YoY: 2025 YTD $${ytd2025Revenue.toLocaleString()} (${ytd2025Deals} deals) vs 2026 YTD $${ytd2026Revenue.toLocaleString()} (${ytd2026Deals} deals); same-months Δ $${deltaYtdRevenue.toLocaleString()} (${deltaYtdPct.toFixed(1)}%)`);
+
+  // ================================================================
   // 10. COMPANY TARGETS & DERIVED METRICS
   // ================================================================
   const company = {
@@ -3052,9 +3120,39 @@ export async function fetchAllKpiData() {
   };
 
   // ---------- Lead Source ROI (FUB people × marketing spend) ----------
+  // Build spend map from BOTH sources:
+  //   1) marketingSpendDetail.byChannel — per-deal attribution
+  //   2) marketingChannels — the "Marketing 2026 KPIs" tab (YTD budgeted spend)
+  // and apply alias map so FUB lead-source names ("Google PPC", "Facebook", "PPL")
+  // line up with the marketing tracker labels ("Google Ads PPC", "MTHS FB Ads",
+  // "Property Leads (PPL)").
   const spendByChannel = new Map<string, number>();
   for (const row of marketingSpendDetail.byChannel) {
     spendByChannel.set(row.name, row.spend);
+  }
+  // Alias map: marketing tracker label → list of FUB source names to populate.
+  // When a FUB source name doesn't match a tracker channel literally, we copy the
+  // tracker spend under each FUB alias so the Lead-Source ROI tile can resolve it.
+  const trackerAliases: Record<string, string[]> = {
+    "SEO":                       ["SEO", "Organic Web", "Organic"],
+    "Google Ads PPC":             ["Google Ads PPC", "Google PPC", "Google Ads", "Google"],
+    "MTHS FB Ads":                ["MTHS FB Ads", "Facebook", "FB Ads", "FB Group"],
+    "TV Ads":                     ["TV Ads", "TV"],
+    "Radio":                      ["Radio"],
+    "MTHS Truck / Yard Sign":     ["MTHS Truck / Yard Sign", "MTHS Truck", "Print/Signage"],
+    "Billboards / Yard Signs":    ["Billboards / Yard Signs", "Billboards"],
+    "Property Leads (PPL)":       ["Property Leads (PPL)", "PPL"],
+    "Referrals (Clever, Others)": ["Referrals (Clever, Others)", "Referral", "Referrals"],
+    "Self Generated/Deal Sniper": ["Self Generated/Deal Sniper", "Self Generated Buyer", "Self Generated Lead", "Deal Sniper"],
+  };
+  for (const ch of marketingChannels) {
+    const aliases = trackerAliases[ch.name] || [ch.name];
+    for (const alias of aliases) {
+      // Only fill if not already populated from per-deal attribution
+      if (!spendByChannel.has(alias) && (ch.spend || 0) > 0) {
+        spendByChannel.set(alias, ch.spend || 0);
+      }
+    }
   }
   const leadSourcesData: FubLeadSourceData = await fetchLeadSourceData(
     process.env.FUB_API_KEY || "",
@@ -3277,6 +3375,7 @@ export async function fetchAllKpiData() {
     newBuyers,
     transactions,
     revenueTracker,
+    revenueTrackerYoY,
     company,
     companyWeekly,
     dispoWeekly,
