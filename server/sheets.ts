@@ -1184,30 +1184,37 @@ export async function fetchAllKpiData() {
   // DAYS-TO-CLOSE: average days between FUB Under-Contract date and
   // Rev Tracker close date, per deal name match (fuzzy normalized).
   // ----------------------------------------------------------------
-  function normDealName(s: string): string {
-    return (s || "").toLowerCase()
+  // FUB deal names look like "Richard- 3730 Heather Dr, Clarksville" — strip the
+  // seller-first-name prefix before normalizing. Rev Tracker just has the address.
+  function extractAddress(s: string): string {
+    let v = (s || "").trim();
+    // Strip "FirstName- " or "FirstName : " prefix (letters/spaces then dash/colon)
+    v = v.replace(/^[A-Za-z\.\&\s']+[\-:\u2013]\s*/, "");
+    return v;
+  }
+  function normAddressKey(s: string): string {
+    // Take just the street portion (before first comma) + house number for matching
+    const justStreet = (s || "").split(",")[0] || "";
+    return justStreet.toLowerCase()
+      .replace(/\b(street|str|st|drive|dr|road|rd|avenue|ave|av|lane|ln|court|ct|circle|cir|place|pl|boulevard|blvd|way|trail|tr|highway|hwy|parkway|pkwy)\b\.?/g, "")
       .replace(/[^a-z0-9 ]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
   }
   const ucByName = new Map<string, Date>();
-  // Use the AQ pipeline deals we already fetched indirectly via acqFub? We need raw deals.
-  // Easier: read AQ + Dispo dealsByMonth structure. Use dispoFub.byOwner? No — use the
-  // raw `dispoFub` records that include UC dates. Best source: dispoFub has rows with
-  // address + dates. Let me use the dispo data already in memory.
   // Pull UC dates from acqFub.dealsWithUC (added in fub-acquisitions.ts) — that
   // covers AQ + Dispo + Novations + Flips + Listing-Referrals pipelines.
   const dealsWithUC = (acqFub as any).dealsWithUC || [];
   for (const d of dealsWithUC) {
     if (d.name && d.ucDate) {
-      const k = normDealName(d.name);
+      const k = normAddressKey(extractAddress(d.name));
       if (k && !ucByName.has(k)) ucByName.set(k, new Date(d.ucDate));
     }
   }
   const closeByName = new Map<string, Date>();
   for (const deals of Object.values(dealsByMonth)) {
     for (const d of deals) {
-      const k = normDealName(d.deal || "");
+      const k = normAddressKey(d.deal || "");
       const closeDate = parseCloseDate(d.closeDate);
       if (k && closeDate && !closeByName.has(k)) closeByName.set(k, closeDate);
     }
