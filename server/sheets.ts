@@ -3454,6 +3454,7 @@ function buildBouncieReal(bouncie: BouncieData) {
       avgDriveMinPerDay: Math.round(r.driveTimeMin / bouncie.windowDays),
       avgMilesPerDay: Math.round((r.distanceMi / bouncie.windowDays) * 10) / 10,
     })),
+    locations: bouncie.locations || [],
     unmappedReps: bouncie.unmappedRepsNote,
   };
 }
