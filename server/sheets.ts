@@ -15,6 +15,7 @@ import {
 import { fetchDispoFubData, type DispoFubData } from "./fub";
 import { fetchAcqFubData, type AcqFubData, AQ_REPS } from "./fub-acquisitions";
 import { fetchBouncieData, type BouncieData } from "./bouncie";
+import { fetchLeadSourceData, type FubLeadSourceData } from "./fub-lead-sources";
 import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
 import { fetchWeeklyMarketingData, type WeeklyMarketingData } from "./weeklyMarketing";
 
@@ -1145,6 +1146,100 @@ export async function fetchAllKpiData() {
     fubError: acqFub.error,
   };
   console.log(`[sheets] Conversion funnel (${fubWindowDays}d): ${tCalls} calls → ${tApptsSet} appts → ${tApptsExec} attended → ${tOffers} offers → ${tContracts} contracts → ${fundedInWindow} funded`);
+
+  // Per-rep conversion funnel (same window): each rep gets their own column
+  // of calls → appts set → attended → offers → contracts. Closings come from
+  // Rev Tracker per-agent deal counts (this calendar month).
+  const currentMonthShort = new Date().toLocaleDateString("en-US", { month: "short" });
+  const SHEET_TO_CANONICAL_FUNNEL: Record<string, string> = {
+    "Korbin": "Korbin", "Brandon": "Brandon", "Jeff Henry": "Jeff H",
+    "TJ": "TJ", "Ryan Craig": "Ryan", "Jonathan Medlin": "Jonathan",
+  };
+  const closingsThisMonthByRep: Record<string, number> = {};
+  for (const [sheetName, canonical] of Object.entries(SHEET_TO_CANONICAL_FUNNEL)) {
+    const byMonth = perAgentDealCountByMonth[sheetName] || {};
+    closingsThisMonthByRep[canonical] = byMonth[currentMonthShort] || 0;
+  }
+  const perRepFunnel = {
+    windowDays: fubWindowDays,
+    closingsMonth: currentMonthShort,
+    source: "fub+revtracker",
+    reps: acqFub.reps.map(r => ({
+      rep: r.agent,
+      calls: r.callCount,
+      apptsSet: r.apptsSet,
+      apptsAttended: r.apptsExecuted,
+      offers: r.offersMade,
+      contracts: r.contracts,
+      closings: closingsThisMonthByRep[r.agent] || 0,
+      // conversion rates
+      callToAppt: r.callCount > 0 ? Math.round((r.apptsSet / r.callCount) * 1000) / 10 : 0,
+      apptToOffer: r.apptsExecuted > 0 ? Math.round((r.offersMade / r.apptsExecuted) * 1000) / 10 : 0,
+      offerToContract: r.offersMade > 0 ? Math.round((r.contracts / r.offersMade) * 1000) / 10 : 0,
+    })),
+  };
+
+  // ================================================================
+  // DAYS-TO-CLOSE: average days between FUB Under-Contract date and
+  // Rev Tracker close date, per deal name match (fuzzy normalized).
+  // ----------------------------------------------------------------
+  function normDealName(s: string): string {
+    return (s || "").toLowerCase()
+      .replace(/[^a-z0-9 ]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  const ucByName = new Map<string, Date>();
+  // Use the AQ pipeline deals we already fetched indirectly via acqFub? We need raw deals.
+  // Easier: read AQ + Dispo dealsByMonth structure. Use dispoFub.byOwner? No — use the
+  // raw `dispoFub` records that include UC dates. Best source: dispoFub has rows with
+  // address + dates. Let me use the dispo data already in memory.
+  type DispoDealForDtc = { address?: string; underContractDate?: string };
+  const dispoDealsForDtc: DispoDealForDtc[] = (dispoFub as any).deals || (dispoFub as any).records || [];
+  for (const d of dispoDealsForDtc) {
+    if (d.address && d.underContractDate) {
+      const k = normDealName(d.address);
+      if (k && !ucByName.has(k)) ucByName.set(k, new Date(d.underContractDate));
+    }
+  }
+  const closeByName = new Map<string, Date>();
+  for (const deals of Object.values(dealsByMonth)) {
+    for (const d of deals) {
+      const k = normDealName(d.deal || "");
+      const closeDate = parseCloseDate(d.closeDate);
+      if (k && closeDate && !closeByName.has(k)) closeByName.set(k, closeDate);
+    }
+  }
+  const dtcSamples: { deal: string; days: number }[] = [];
+  for (const [name, ucDate] of ucByName.entries()) {
+    const closeDate = closeByName.get(name);
+    if (closeDate) {
+      const days = Math.round((closeDate.getTime() - ucDate.getTime()) / (24 * 3600 * 1000));
+      if (days >= 0 && days < 365) {
+        dtcSamples.push({ deal: name.slice(0, 60), days });
+      }
+    }
+  }
+  const dtcAvg = dtcSamples.length > 0
+    ? Math.round(dtcSamples.reduce((s, x) => s + x.days, 0) / dtcSamples.length)
+    : null;
+  const dtcMedian = dtcSamples.length > 0
+    ? dtcSamples.map(x => x.days).sort((a, b) => a - b)[Math.floor(dtcSamples.length / 2)]
+    : null;
+  const daysToClose = {
+    avgDays: dtcAvg,
+    medianDays: dtcMedian,
+    sampleSize: dtcSamples.length,
+    fastest: dtcSamples.length > 0
+      ? Math.min(...dtcSamples.map(x => x.days)) : null,
+    slowest: dtcSamples.length > 0
+      ? Math.max(...dtcSamples.map(x => x.days)) : null,
+    fubFound: ucByName.size,
+    revTrackerFound: closeByName.size,
+    matched: dtcSamples.length,
+    method: "address-name join: FUB underContractDate ↔ Rev Tracker close date",
+  };
+  console.log(`[sheets] Days-to-close: avg ${dtcAvg}d, median ${dtcMedian}d (n=${dtcSamples.length}; FUB UC=${ucByName.size}, RT close=${closeByName.size})`);
 
   // ================================================================
   // PHASE 8: REVENUE TRACKER IS NOW THE SOURCE OF TRUTH FOR REVENUE
@@ -2937,6 +3032,26 @@ export async function fetchAllKpiData() {
     overallRoas: totalSpend > 0 ? Math.round((totalSpendProfit / totalSpend) * 100) / 100 : 0,
   };
 
+  // ---------- Lead Source ROI (FUB people × marketing spend) ----------
+  const spendByChannel = new Map<string, number>();
+  for (const row of marketingSpendDetail.byChannel) {
+    spendByChannel.set(row.name, row.spend);
+  }
+  const leadSourcesData: FubLeadSourceData = await fetchLeadSourceData(
+    process.env.FUB_API_KEY || "",
+    spendByChannel,
+    90,
+  ).catch((e): FubLeadSourceData => ({
+    windowDays: 90, fetchedAt: new Date().toISOString(), sources: [],
+    totalLeads: 0, totalContracts: 0, totalSpend: 0,
+    error: `lead-source fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
+  }));
+  if (leadSourcesData.error) {
+    console.warn(`[lead-sources] ${leadSourcesData.error}`);
+  } else {
+    console.log(`[lead-sources] ${leadSourcesData.sources.length} sources, ${leadSourcesData.totalLeads} leads, ${leadSourcesData.totalContracts} contracts in last ${leadSourcesData.windowDays}d`);
+  }
+
   // ---------- KPI Ownership Map ----------
   const ownerRows = sheets.kpiOwners?.rows || [];
   const kpiOwnership = {
@@ -3170,7 +3285,27 @@ export async function fetchAllKpiData() {
       perAgentDealCount: perAgentDealCountByMonth,
       marketingSourceRollup,
     },
-    bouncieDriveTime: buildBouncieMock(),
+    bouncieDriveTime: bouncie.reps.length > 0 ? buildBouncieReal(bouncie) : buildBouncieMock(),
+    bouncieMeta: {
+      vehiclesConnected: bouncie.vehiclesConnected,
+      repsWithDevices: bouncie.reps.map(r => r.rep),
+      unmappedReps: bouncie.unmappedRepsNote,
+      fetchedAt: bouncie.fetchedAt,
+      isReal: bouncie.reps.length > 0,
+    },
+    leadSources: leadSourcesData,
+    daysToClose,
+    perRepFunnel,
+    dataFreshness: {
+      sheets:           { fetchedAt: lastUpdated, source: "google_sheets" },
+      fubDispo:         { fetchedAt: dispoFub.fetchedAt, error: dispoFub.error, source: "fub" },
+      fubAcq:           { fetchedAt: acqFub.fetchedAt, error: acqFub.error, source: "fub" },
+      mailchimp:        { fetchedAt: (mailchimp as any).fetchedAt, error: (mailchimp as any).error, source: "mailchimp" },
+      weeklyMarketing:  { fetchedAt: weeklyMarketing.fetchedAt, error: weeklyMarketing.error, source: "google_sheets" },
+      bouncie:          { fetchedAt: bouncie.fetchedAt, source: "bouncie" },
+      leadSources:      { fetchedAt: leadSourcesData.fetchedAt, error: leadSourcesData.error, source: "fub" },
+      computedAt:       new Date().toISOString(),
+    },
     dispoFub,
     mailchimp,
     weeklyMarketing,
@@ -3182,6 +3317,28 @@ export async function fetchAllKpiData() {
  * Replaced once real Bouncie API token arrives.
  * Generates realistic-looking but deterministic data so re-renders are stable.
  */
+// Real Bouncie data — returns aggregated 30d stats per rep with a device.
+function buildBouncieReal(bouncie: BouncieData) {
+  return {
+    isReal: true,
+    windowDays: bouncie.windowDays,
+    fetchedAt: bouncie.fetchedAt,
+    reps: bouncie.reps.map(r => ({
+      agent: r.rep,
+      driveMinutes30d: r.driveTimeMin,
+      idleMinutes30d: r.idleTimeMin,
+      totalMinutes30d: r.totalTimeMin,
+      miles30d: r.distanceMi,
+      tripCount30d: r.tripCount,
+      hardBrakes: r.hardBrakes,
+      hardAccels: r.hardAccels,
+      avgDriveMinPerDay: Math.round(r.driveTimeMin / bouncie.windowDays),
+      avgMilesPerDay: Math.round((r.distanceMi / bouncie.windowDays) * 10) / 10,
+    })),
+    unmappedReps: bouncie.unmappedRepsNote,
+  };
+}
+
 function buildBouncieMock() {
   const agents = ["Korbin", "TJ", "Ryan", "Brandon", "Jeff Henry", "Jonathan Medlin"];
   const today = new Date();
