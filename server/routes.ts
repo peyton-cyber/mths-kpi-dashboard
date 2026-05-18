@@ -337,6 +337,56 @@ export async function registerRoutes(
     res.json({ status: "ok" });
   });
 
+  // ─── Bouncie OAuth callback ───
+  // Bouncie redirects here with ?code=... after the user clicks Allow.
+  // We exchange the code for a refresh token (one-time) and persist it.
+  app.get("/api/bouncie/callback", async (req, res) => {
+    const code = String(req.query.code || "");
+    if (!code) {
+      return res.status(400).send(
+        "<html><body style='font-family:system-ui;padding:40px;max-width:600px;margin:auto'>" +
+        "<h2>Bouncie callback error</h2><p>No <code>?code</code> parameter in the URL. " +
+        "Re-click the authorize link from the assistant.</p></body></html>"
+      );
+    }
+    const clientId = process.env.BOUNCIE_CLIENT_ID || "mths-kpi-dashboard";
+    const clientSecret = process.env.BOUNCIE_CLIENT_SECRET || "";
+    const redirectUri = "https://mths-kpi-api.onrender.com/api/bouncie/callback";
+    try {
+      const tokenResp = await fetch("https://auth.bouncie.com/oauth/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: "authorization_code",
+          code,
+          redirect_uri: redirectUri,
+        }).toString(),
+      });
+      const body = await tokenResp.text();
+      const display = body.length > 1500 ? body.slice(0, 1500) + "..." : body;
+      res.set("Content-Type", "text/html");
+      res.send(
+        "<html><body style='font-family:system-ui;padding:40px;max-width:800px;margin:auto'>" +
+        `<h2>Bouncie OAuth response (${tokenResp.status})</h2>` +
+        "<p>Copy this entire block and paste it back to the assistant:</p>" +
+        `<pre style='background:#f4f4f4;padding:16px;border-radius:8px;overflow:auto'>${
+          display.replace(/</g, "&lt;")
+        }</pre>` +
+        `<p><strong>Auth code received:</strong> <code>${code.slice(0, 12)}...</code></p>` +
+        "</body></html>"
+      );
+    } catch (err: any) {
+      res.status(500).send(
+        "<html><body style='font-family:system-ui;padding:40px;max-width:600px;margin:auto'>" +
+        `<h2>Token exchange failed</h2><pre>${String(err?.message || err)}</pre>` +
+        `<p>Auth code (paste this back to the assistant): <code>${code}</code></p>` +
+        "</body></html>"
+      );
+    }
+  });
+
   // ─── Slack digest ─ weekly KPI summary as Markdown ready to post ───
   // Returns the digest as JSON — frontend or external cron can read this and
   // post to Slack when desired. Auto-posting stays paused per user request.
