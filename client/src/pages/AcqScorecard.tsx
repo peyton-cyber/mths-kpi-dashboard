@@ -110,11 +110,26 @@ export default function AcqScorecard() {
 
   const matrix = hasData ? buildMatrix() : [];
 
-  // Bouncie drive time
-  const bouncie = data.bouncieDriveTime;
-  const bouncieRows = bouncie ? Object.entries(bouncie.byAgent).map(([name, b]) => ({
-    name, ...b,
-  })).sort((a, b) => b.totalMinutes - a.totalMinutes) : [];
+  // Bouncie drive time — handle both shapes: real (reps[]) vs mock (byAgent{})
+  const bouncie = data.bouncieDriveTime as any;
+  let bouncieRows: { name: string; totalMinutes: number; totalMiles: number; totalStops: number; days: number; avgMinutes: number; avgMiles: number }[] = [];
+  if (bouncie?.reps && Array.isArray(bouncie.reps)) {
+    // Real Bouncie shape
+    bouncieRows = bouncie.reps.map((r: any) => ({
+      name: r.agent,
+      totalMinutes: r.totalMinutes30d ?? r.driveMinutes30d ?? 0,
+      totalMiles: r.miles30d ?? 0,
+      totalStops: r.tripCount30d ?? 0,
+      days: bouncie.windowDays ?? 30,
+      avgMinutes: r.avgDriveMinPerDay ?? 0,
+      avgMiles: r.avgMilesPerDay ?? 0,
+    })).sort((a: any, b: any) => b.totalMinutes - a.totalMinutes);
+  } else if (bouncie?.byAgent && typeof bouncie.byAgent === "object") {
+    // Mock Bouncie shape
+    bouncieRows = Object.entries(bouncie.byAgent).map(([name, b]: [string, any]) => ({
+      name, ...b,
+    })).sort((a, b) => b.totalMinutes - a.totalMinutes);
+  }
 
   // Rev Tracker ROAS
   const revRoas = data.revTrackerRoas;
@@ -209,7 +224,7 @@ export default function AcqScorecard() {
           {bouncieRows.length > 0 && (
             <Section
               title="Drive Time"
-              subtitle={`Bouncie · last 30 days · ${bouncie?.source === "mock" ? "MOCK DATA (until token arrives)" : "live"}`}
+              subtitle={`Bouncie · last 30 days · ${bouncie?.isReal ? "live" : "MOCK DATA (until token arrives)"}`}
             >
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {bouncieRows.map(b => (
