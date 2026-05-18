@@ -1193,10 +1193,20 @@ export async function fetchAllKpiData() {
     return v;
   }
   function normAddressKey(s: string): string {
-    // Take just the street portion (before first comma) + house number for matching
+    // Rev Tracker has street names ONLY ("Ambrose Drive", "Dupree Lane"), no house
+    // number. FUB has full addresses ("610 Gusty Way, Mt Juliet"). To match, drop
+    // the leading house number, drop city/state after comma, drop street suffix
+    // and any tags like "(novation)", and keep just the street-name tokens.
     const justStreet = (s || "").split(",")[0] || "";
     return justStreet.toLowerCase()
-      .replace(/\b(street|str|st|drive|dr|road|rd|avenue|ave|av|lane|ln|court|ct|circle|cir|place|pl|boulevard|blvd|way|trail|tr|highway|hwy|parkway|pkwy)\b\.?/g, "")
+      // strip parenthetical tags like "(listing referral)", "(novation)", "(rental)"
+      .replace(/\([^)]*\)/g, " ")
+      // drop trailing/embedded tag words used in Rev Tracker without parens
+      .replace(/\b(listing referral|novation|rental|flip|wholesale)\b/g, " ")
+      // drop leading house number (e.g. "610 gusty way" -> " gusty way")
+      .replace(/^\s*\d+\s+/, " ")
+      // drop common street suffixes
+      .replace(/\b(street|str|st|drive|dr|road|rd|avenue|ave|av|lane|ln|court|ct|circle|cir|place|pl|boulevard|blvd|way|trail|tr|highway|hwy|parkway|pkwy)\b\.?/g, " ")
       .replace(/[^a-z0-9 ]+/g, " ")
       .replace(/\s+/g, " ")
       .trim();
