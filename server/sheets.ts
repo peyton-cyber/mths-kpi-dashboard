@@ -1245,9 +1245,6 @@ export async function fetchAllKpiData() {
   const dtcMedian = dtcSamples.length > 0
     ? dtcSamples.map(x => x.days).sort((a, b) => a - b)[Math.floor(dtcSamples.length / 2)]
     : null;
-  // Diagnostics: show a few sample unmatched keys to help tune the normalizer
-  const sampleUcKeys = Array.from(ucByName.keys()).slice(0, 5);
-  const sampleRtKeys = Array.from(closeByName.keys()).slice(0, 5);
   const daysToClose = {
     avgDays: dtcAvg,
     medianDays: dtcMedian,
@@ -1259,9 +1256,7 @@ export async function fetchAllKpiData() {
     fubFound: ucByName.size,
     revTrackerFound: closeByName.size,
     matched: dtcSamples.length,
-    sampleUcKeys,
-    sampleRtKeys,
-    method: "address-name join: FUB underContractDate ↔ Rev Tracker close date",
+    method: "street-name join: FUB underContractDate ↔ Rev Tracker close date",
   };
   console.log(`[sheets] Days-to-close: avg ${dtcAvg}d, median ${dtcMedian}d (n=${dtcSamples.length}; FUB UC=${ucByName.size}, RT close=${closeByName.size})`);
 
