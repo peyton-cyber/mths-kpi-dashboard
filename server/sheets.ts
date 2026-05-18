@@ -14,6 +14,7 @@ import {
 } from "./google-sheets-client";
 import { fetchDispoFubData, type DispoFubData } from "./fub";
 import { fetchAcqFubData, type AcqFubData, AQ_REPS } from "./fub-acquisitions";
+import { fetchBouncieData, type BouncieData } from "./bouncie";
 import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
 import { fetchWeeklyMarketingData, type WeeklyMarketingData } from "./weeklyMarketing";
 
@@ -261,7 +262,7 @@ export async function fetchAllKpiData() {
   console.log(`[sheets] RISE tabs (auto): current="${currentRiseTab}", prev="${prevRiseTab}"`);
 
   // Fetch sheets, Asana sprint goals, FUB dispo data, Mailchimp, and Weekly Marketing in parallel
-  const [sheets, sprintGoalsList, dispoFub, mailchimp, weeklyMarketing, acqFub] = await Promise.all([
+  const [sheets, sprintGoalsList, dispoFub, mailchimp, weeklyMarketing, acqFub, bouncie] = await Promise.all([
     fetchSheetsParallel([
       { label: "mktg", spreadsheetId: MASTER_KPIS, sheetName: "Marketing 2026 KPIs" },
       { label: "deals", spreadsheetId: MASTER_KPIS, sheetName: "TOP 10 DEALS" },
@@ -346,7 +347,18 @@ export async function fetchAllKpiData() {
         error: `FUB acq fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
       };
     }),
+    fetchBouncieData(30).catch((e): BouncieData => {
+      console.error(`[bouncie] fetch failed: ${(e?.message || "").slice(0, 200)}`);
+      return {
+        fetchedAt: new Date().toISOString(),
+        windowDays: 30,
+        reps: [],
+        vehiclesConnected: 0,
+        unmappedRepsNote: ["Brandon", "Jeff H", "Ryan", "Jonathan"],
+      };
+    }),
   ]);
+  console.log(`[bouncie] ${bouncie.reps.length} reps with devices, ${bouncie.vehiclesConnected} vehicles connected`);
   if (weeklyMarketing.error) {
     console.warn(`[weeklyMarketing] returned error: ${weeklyMarketing.error}`);
   } else {
@@ -2813,17 +2825,25 @@ export async function fetchAllKpiData() {
     }
   }
 
-  // Merge: prefer FUB data for the 6 reporting reps, keep sheet-only fields
-  // (drive/windshield time) where available.
+  // Bouncie per-rep drive/idle data (last 30d). Overrides sheet manual entries
+  // for reps with a paired device.
+  const bouncieByRep: Record<string, { drive: number; idle: number; distance: number }> = {};
+  for (const b of bouncie.reps) {
+    bouncieByRep[b.rep] = { drive: b.driveTimeMin, idle: b.idleTimeMin, distance: b.distanceMi };
+  }
+
+  // Merge: prefer FUB data for the 6 reporting reps, prefer Bouncie for drive/windshield
+  // time when a device is paired; otherwise fall back to sheet manual entries.
   const mergedAgents: AcqAgent[] = [];
   for (const fubRep of acqFub.reps) {
     const sheetRep = acqRepsBySheet.get(fubRep.agent);
     const days = Math.max(sheetRep?.days || 0, acqFub.windowDays);
+    const bouncieRep = bouncieByRep[fubRep.agent];
     const merged: AcqAgent = {
       agent: fubRep.agent,
       days,
-      driveTime: sheetRep?.driveTime || 0,
-      windshieldTime: sheetRep?.windshieldTime || 0,
+      driveTime: bouncieRep ? bouncieRep.drive : (sheetRep?.driveTime || 0),
+      windshieldTime: bouncieRep ? bouncieRep.idle : (sheetRep?.windshieldTime || 0),
       talkTime: Math.round(fubRep.talkTimeMin),
       touchPoints: fubRep.callCount,
       apptsSet: fubRep.apptsSet,
@@ -2854,6 +2874,12 @@ export async function fetchAllKpiData() {
     source: acqFub.error ? "sheet" : "fub",
     fubError: acqFub.error,
     fetchedAt: acqFub.fetchedAt,
+    bouncie: {
+      vehiclesConnected: bouncie.vehiclesConnected,
+      repsWithDevices: bouncie.reps.map(r => r.rep),
+      unmappedReps: bouncie.unmappedRepsNote,
+      fetchedAt: bouncie.fetchedAt,
+    },
   };
 
   // ---------- Marketing Spend & ROAS (per-agent monthly) ----------
