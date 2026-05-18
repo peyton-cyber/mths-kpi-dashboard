@@ -259,6 +259,33 @@ export interface KpiData {
   dispoFub?: DispoFubData;
   mailchimp?: MailchimpData;
   weeklyMarketing?: WeeklyMarketingData;
+  leadSources?: {
+    windowDays: number;
+    fetchedAt: string;
+    error?: string;
+    sources: { source: string; leads: number; appts: number; contracts: number; spend: number; cac: number; cpl: number }[];
+    totalLeads: number;
+    totalContracts: number;
+    totalSpend: number;
+  };
+  daysToClose?: {
+    avgDays: number | null;
+    medianDays: number | null;
+    sampleSize: number;
+    fastest: number | null;
+    slowest: number | null;
+    fubFound: number;
+    revTrackerFound: number;
+    matched: number;
+    method: string;
+  };
+  perRepFunnel?: {
+    windowDays: number;
+    closingsMonth: string;
+    source: string;
+    reps: { rep: string; calls: number; apptsSet: number; apptsAttended: number; offers: number; contracts: number; closings: number; callToAppt: number; apptToOffer: number; offerToContract: number }[];
+  };
+  dataFreshness?: Record<string, { fetchedAt?: string; error?: string; source?: string }>;
 }
 
 export interface WeeklyMarketingRecord {

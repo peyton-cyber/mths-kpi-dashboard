@@ -17,6 +17,7 @@ import {
 import { fmtMoney } from "@/lib/useKpiData";
 import { Link } from "wouter";
 import { Car, Gauge, MapPin } from "lucide-react";
+import { PerRepFunnelTile, DaysToCloseTile, LeadSourceRoiTile } from "@/components/QuickWinTiles";
 
 function statusColor(actual: number, target: number, lowerIsBetter = false): string {
   if (target === 0) return "hsl(var(--muted-foreground))";
@@ -350,8 +351,14 @@ export default function AcqScorecard() {
           )}
 
           {/* ROAS by agent removed per leadership feedback — not high-priority at agent level */}
+
+          {/* Quick-wins sprint: per-rep funnel, days-to-close, lead-source ROI */}
+          <PerRepFunnelTile />
+          <DaysToCloseTile />
+          <LeadSourceRoiTile />
         </>
       )}
     </div>
   );
 }
+

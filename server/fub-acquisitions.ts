@@ -74,6 +74,8 @@ export type AcqFubData = {
     contracts: number;
     offersMade: number;
   };
+  /** Flat list of deals with FUB Under-Contract date, for days-to-close join. */
+  dealsWithUC?: { name: string; ucDate: string }[];
   fetchedAt: string;
   source: "fub";
   error?: string;
@@ -437,7 +439,15 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
       offersMade: t.offersMade + r.offersMade,
     }), { apptsSet: 0, apptsExecuted: 0, callCount: 0, talkTimeMin: 0, contracts: 0, offersMade: 0 });
 
-    return { windowDays, reps, totals, fetchedAt, source: "fub" };
+    // Days-to-close feed: every deal with a UC date (across all 5 pipelines we pulled)
+    const dealsWithUC: { name: string; ucDate: string }[] = [];
+    const allDeals = [...aqDeals, ...dispoDeals, ...novationDeals, ...flipDeals, ...listingReferralDeals];
+    for (const d of allDeals) {
+      const uc = (d as any).customUnderContractDate;
+      const nm = (d as any).name || (d as any).deal || "";
+      if (uc && nm) dealsWithUC.push({ name: String(nm), ucDate: String(uc) });
+    }
+    return { windowDays, reps, totals, dealsWithUC, fetchedAt, source: "fub" };
   } catch (e) {
     return { ...empty, error: `FUB AQ fetch failed: ${(e as Error).message}` };
   }

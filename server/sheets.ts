@@ -1194,12 +1194,13 @@ export async function fetchAllKpiData() {
   // Easier: read AQ + Dispo dealsByMonth structure. Use dispoFub.byOwner? No — use the
   // raw `dispoFub` records that include UC dates. Best source: dispoFub has rows with
   // address + dates. Let me use the dispo data already in memory.
-  type DispoDealForDtc = { address?: string; underContractDate?: string };
-  const dispoDealsForDtc: DispoDealForDtc[] = (dispoFub as any).deals || (dispoFub as any).records || [];
-  for (const d of dispoDealsForDtc) {
-    if (d.address && d.underContractDate) {
-      const k = normDealName(d.address);
-      if (k && !ucByName.has(k)) ucByName.set(k, new Date(d.underContractDate));
+  // Pull UC dates from acqFub.dealsWithUC (added in fub-acquisitions.ts) — that
+  // covers AQ + Dispo + Novations + Flips + Listing-Referrals pipelines.
+  const dealsWithUC = (acqFub as any).dealsWithUC || [];
+  for (const d of dealsWithUC) {
+    if (d.name && d.ucDate) {
+      const k = normDealName(d.name);
+      if (k && !ucByName.has(k)) ucByName.set(k, new Date(d.ucDate));
     }
   }
   const closeByName = new Map<string, Date>();
