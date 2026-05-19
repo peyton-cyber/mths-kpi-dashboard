@@ -17,9 +17,51 @@ const REP_BY_IMEI: Record<string, string> = {
 let cachedAccessToken: string | null = null;
 let cachedAccessExpiresAt = 0;
 // Bouncie rotates refresh tokens on every refresh call. We hold the latest one
-// in process memory so subsequent refreshes within the same process work even
-// before the env var is updated. The env var is only the *seed* for cold starts.
+// in process memory AND persist it back to Render env vars so it survives cold
+// starts on the free tier (which spins down the process after 15min idle).
 let currentRefreshToken: string | null = null;
+let pendingPersist: Promise<void> | null = null;
+
+/**
+ * Persist rotated Bouncie tokens back to Render env vars so the next cold
+ * start can authenticate. Without this, the free-tier spin-down loses the
+ * in-memory token and the next refresh fails with invalid_grant 403.
+ *
+ * Requires RENDER_API_KEY and RENDER_SERVICE_ID env vars (set on Render).
+ * NOTE: Updating env vars via the Render API does NOT trigger a redeploy
+ * (verified — the API returns the updated value but the service keeps running).
+ */
+async function persistTokensToRender(refreshToken: string, accessToken: string, expiresAt: number): Promise<void> {
+  const renderKey = process.env.RENDER_API_KEY;
+  const serviceId = process.env.RENDER_SERVICE_ID;
+  if (!renderKey || !serviceId) {
+    console.warn("[bouncie] cannot persist tokens — RENDER_API_KEY or RENDER_SERVICE_ID not set");
+    return;
+  }
+  // Coalesce concurrent persist calls
+  if (pendingPersist) return pendingPersist;
+  pendingPersist = (async () => {
+    const updates: Array<[string, string]> = [
+      ["BOUNCIE_REFRESH_TOKEN", refreshToken],
+      ["BOUNCIE_ACCESS_TOKEN_SEED", accessToken],
+      ["BOUNCIE_ACCESS_EXPIRES_AT", String(expiresAt)],
+    ];
+    for (const [key, value] of updates) {
+      try {
+        const r = await fetch(`https://api.render.com/v1/services/${serviceId}/env-vars/${key}`, {
+          method: "PUT",
+          headers: { "Authorization": `Bearer ${renderKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ value }),
+        });
+        if (!r.ok) console.warn(`[bouncie] persist ${key} failed: ${r.status} ${await r.text()}`);
+      } catch (e: any) {
+        console.warn(`[bouncie] persist ${key} error: ${e?.message}`);
+      }
+    }
+    console.log(`[bouncie] persisted rotated tokens to Render env vars (refresh + access seed)`);
+  })();
+  try { await pendingPersist; } finally { pendingPersist = null; }
+}
 
 async function refreshAccessToken(): Promise<string | null> {
   const refreshToken = currentRefreshToken || process.env.BOUNCIE_REFRESH_TOKEN || null;
@@ -51,11 +93,15 @@ async function refreshAccessToken(): Promise<string | null> {
     const j: any = await resp.json();
     cachedAccessToken = j.access_token;
     cachedAccessExpiresAt = Date.now() + (j.expires_in || 3600) * 1000 - 60_000;
-    // Bouncie rotates refresh tokens — keep the latest one in memory so the next
-    // refresh in this process works. Persisting to env requires a redeploy.
+    // Bouncie rotates refresh tokens — keep the latest one in memory AND persist
+    // back to Render env vars so it survives cold starts.
     if (j.refresh_token && j.refresh_token !== refreshToken) {
       currentRefreshToken = j.refresh_token;
-      console.log(`[bouncie] refresh token rotated (in-memory). To persist across deploys, update BOUNCIE_REFRESH_TOKEN env var to: ${j.refresh_token}`);
+      console.log(`[bouncie] refresh token rotated, persisting to Render env vars`);
+      // Fire and forget — don't block the caller on persistence.
+      persistTokensToRender(j.refresh_token, j.access_token, cachedAccessExpiresAt).catch(e =>
+        console.warn(`[bouncie] persist failed: ${e?.message}`)
+      );
     }
     return cachedAccessToken;
   } catch (e: any) {
