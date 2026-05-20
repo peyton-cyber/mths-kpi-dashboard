@@ -19,6 +19,7 @@ import { fetchLeadSourceData, type FubLeadSourceData } from "./fub-lead-sources"
 import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
 import { fetchWeeklyMarketingData, type WeeklyMarketingData } from "./weeklyMarketing";
 import { buildKpiMonthCalendar, getCurrentKpiMonthIdx, type KpiMonth } from "./kpi-month";
+import { buildCurrentDeals, buildAqFunnel, buildDealTypeSegmentation, buildLmAqCombos } from "./deal-analytics";
 
 // Sheet IDs
 const MASTER_KPIS = "1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0";
@@ -167,36 +168,8 @@ function parseFloat2(s: string | undefined): number {
   return parseFloat(s.replace(/[,$\s]/g, "")) || 0;
 }
 
-// ========== DATE PARSING (Historic Deal KPIs is messy: M/D/YY, M/D/YYYY, ISO, MM/DD/YY) ==========
-function parseFlexDate(s: string | undefined): Date | null {
-  if (!s || typeof s !== "string") return null;
-  const t = s.trim();
-  if (!t) return null;
-  // ISO format YYYY-MM-DD
-  let m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
-  if (m) {
-    const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    return isNaN(d.getTime()) ? null : d;
-  }
-  // M/D/YY or MM/DD/YYYY
-  m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-  if (m) {
-    let yr = Number(m[3]);
-    if (yr < 100) yr = yr < 50 ? 2000 + yr : 1900 + yr;
-    const d = new Date(yr, Number(m[1]) - 1, Number(m[2]));
-    return isNaN(d.getTime()) ? null : d;
-  }
-  // Fallback: native parse
-  const d = new Date(t);
-  return isNaN(d.getTime()) ? null : d;
-}
-
-function daysBetween(a: Date | null, b: Date | null): number | null {
-  if (!a || !b) return null;
-  const ms = b.getTime() - a.getTime();
-  if (ms < 0) return null;
-  return Math.round(ms / (1000 * 60 * 60 * 24));
-}
+// Date parsing helpers moved to ./date-utils for reuse by deal-analytics.
+import { parseFlexDate, daysBetween } from "./date-utils";
 
 // ========== MONTH MAPPING ==========
 
@@ -3033,7 +3006,31 @@ export async function fetchAllKpiData() {
   };
 
   // ================================================================
-  // PHASE 2 — Acquisitions Activity, Marketing Spend, KPI Ownership
+  // PHASE 2 — Deal Analytics derived from Historic Deal KPIs
+  //   - currentDeals: open deals with phase/projected-revenue snapshot
+  //   - aqFunnel: Marketing KPI net leads → Hub Appts → UC → Closed
+  //   - dealTypeSegmentation: Cash / Sub-2 / Novation / etc.
+  //   - lmAqCombos: which Lead-Manager × AQ-Agent pairs produce results
+  // ================================================================
+  const historicRows = (sheets.historic?.rows || []) as any[];
+  const currentDeals = buildCurrentDeals(historicRows);
+  // Feed Marketing KPI net leads (the source-of-truth per 5/20 review) as the
+  // top-of-funnel count when the funnel covers the YTD window. For the rolling
+  // 30d window, Marketing TOTALS is YTD so we fall back to Historic counts.
+  const aqFunnel30d = buildAqFunnel(historicRows, 30);
+  const aqFunnelYTD = buildAqFunnel(historicRows, 365, marketingTotals.net_leads || undefined);
+  const dealTypeSegmentation = buildDealTypeSegmentation(historicRows, 90);
+  const lmAqCombos = buildLmAqCombos(historicRows, 90);
+  console.log(
+    `[sheets] Phase 2 analytics: ${currentDeals.activeDeals.length} open deals ` +
+    `($${Math.round(currentDeals.summary.totalProjectedRevenue).toLocaleString()} projected), ` +
+    `${dealTypeSegmentation.totals.count} deals/90d in ${dealTypeSegmentation.breakdown.length} deal types, ` +
+    `${lmAqCombos.combos.length} LM×AQ combos`
+  );
+
+  // ================================================================
+  // PHASE 2.5 — Acquisitions Activity, Marketing Spend, KPI Ownership
+  // (legacy section header kept for code navigation)
   // ================================================================
   const numOr0 = (v: any) => {
     const n = parseFloat(String(v ?? "").replace(/[$,\s]/g, ""));
@@ -3546,6 +3543,11 @@ export async function fetchAllKpiData() {
     dailyTransactions,
     lastUpdated,
     cashConversionCycle,
+    // PHASE 2 (5/20 review) — derived deal analytics from Historic Deal KPIs
+    currentDeals,
+    aqFunnel: { rolling30d: aqFunnel30d, ytd: aqFunnelYTD },
+    dealTypeSegmentation,
+    lmAqCombos,
     acquisitionsActivity,
     dealEconomics,
     pipelineForward,
