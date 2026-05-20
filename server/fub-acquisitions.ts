@@ -218,6 +218,20 @@ async function fetchListingReferralsDeals(apiKey: string, signal?: AbortSignal) 
   );
 }
 
+// Underwriting (pipeline 14): a deal landing here means it crossed UC.
+// We use enteredStageAt as the UC date because customUnderContractDate is
+// not consistently populated by this team.
+async function fetchUnderwritingDeals(apiKey: string, signal?: AbortSignal) {
+  return fubPaginate<any>(
+    apiKey,
+    `/deals?pipelineId=14&limit=100&sort=-updated`,
+    "deals",
+    undefined,
+    signal,
+    30,
+  );
+}
+
 export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<AcqFubData> {
   const fetchedAt = new Date().toISOString();
   const empty: AcqFubData = {
@@ -245,7 +259,7 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
     const startISO = start.toISOString();
     const endISO = now.toISOString();
 
-    const [appts, calls, aqDeals, dispoDeals, novationDeals, flipDeals, listingReferralDeals] = await Promise.all([
+    const [appts, calls, aqDeals, dispoDeals, novationDeals, flipDeals, listingReferralDeals, uwDeals] = await Promise.all([
       fetchAllAppointments(apiKey, startISO, endISO, controller.signal),
       fetchRecentCalls(apiKey, startISO, controller.signal),
       fetchAqPipelineDeals(apiKey, controller.signal),
@@ -253,6 +267,7 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
       fetchNovationsDeals(apiKey, controller.signal),
       fetchFlipsDeals(apiKey, controller.signal),
       fetchListingReferralsDeals(apiKey, controller.signal),
+      fetchUnderwritingDeals(apiKey, controller.signal),
     ]);
     clearTimeout(timer);
 
@@ -439,14 +454,46 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
       offersMade: t.offersMade + r.offersMade,
     }), { apptsSet: 0, apptsExecuted: 0, callCount: 0, talkTimeMin: 0, contracts: 0, offersMade: 0 });
 
-    // Days-to-close feed: every deal with a UC date (across all 5 pipelines we pulled)
+    // Days-to-close feed: every deal with a UC date.
+    // Priority order for UC date:
+    //   1. customUnderContractDate (legacy field — rarely populated by this team)
+    //   2. mutualAcceptanceDate (also rarely populated)
+    //   3. enteredStageAt for deals in Underwriting (14) or Disposition (1)
+    //      pipelines — this is when the deal CROSSED UC for this team.
+    // Dedupe by deal id; prefer the earliest UC date when a deal appears in
+    // multiple pipelines.
     const dealsWithUC: { name: string; ucDate: string }[] = [];
-    const allDeals = [...aqDeals, ...dispoDeals, ...novationDeals, ...flipDeals, ...listingReferralDeals];
-    for (const d of allDeals) {
-      const uc = (d as any).customUnderContractDate;
+    const ucByDealId = new Map<number, { name: string; ucDate: string }>();
+    type DealSource = { d: any; pipelineUC?: boolean };
+    const ranked: DealSource[] = [
+      ...uwDeals.map(d => ({ d, pipelineUC: true })),
+      ...dispoDeals.map(d => ({ d, pipelineUC: true })),
+      ...aqDeals.map(d => ({ d, pipelineUC: false })),
+      ...novationDeals.map(d => ({ d, pipelineUC: false })),
+      ...flipDeals.map(d => ({ d, pipelineUC: false })),
+      ...listingReferralDeals.map(d => ({ d, pipelineUC: false })),
+    ];
+    for (const { d, pipelineUC } of ranked) {
+      const id = (d as any)?.id;
       const nm = (d as any).name || (d as any).deal || "";
-      if (uc && nm) dealsWithUC.push({ name: String(nm), ucDate: String(uc) });
+      if (!nm) continue;
+      const explicitUC =
+        (d as any).customUnderContractDate || (d as any).mutualAcceptanceDate;
+      const ucDate = explicitUC
+        ? String(explicitUC)
+        : (pipelineUC && (d as any).enteredStageAt ? String((d as any).enteredStageAt) : "");
+      if (!ucDate) continue;
+      const entry = { name: String(nm), ucDate };
+      if (!id) {
+        dealsWithUC.push(entry);
+        continue;
+      }
+      const prev = ucByDealId.get(id);
+      if (!prev || new Date(ucDate).getTime() < new Date(prev.ucDate).getTime()) {
+        ucByDealId.set(id, entry);
+      }
     }
+    for (const e of ucByDealId.values()) dealsWithUC.push(e);
     return { windowDays, reps, totals, dealsWithUC, fetchedAt, source: "fub" };
   } catch (e) {
     return { ...empty, error: `FUB AQ fetch failed: ${(e as Error).message}` };

@@ -132,6 +132,8 @@ export interface BouncieRepStats {
   distanceMi: number;
   hardBrakes: number;
   hardAccels: number;
+  source: "trips" | "history-fallback" | "unavailable";
+  fallbackNote?: string;
 }
 
 export interface BouncieLocation {
@@ -197,6 +199,7 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
         rep, imei,
         tripCount: 0, driveTimeMin: 0, idleTimeMin: 0, totalTimeMin: 0,
         distanceMi: 0, hardBrakes: 0, hardAccels: 0,
+        source: "trips",
       };
     }
     // Capture live location from /vehicles stats block
@@ -216,30 +219,62 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
         lastUpdated: v?.stats?.lastUpdated || fetchedAt,
       });
     }
+    let tripsLoaded = false;
     try {
       const url = `${BOUNCIE_API}/trips?imei=${imei}&starts-after=${encodeURIComponent(startsAfter)}&gpsFormat=polyline`;
       const r = await fetch(url, { headers: { Authorization: token } });
-      if (!r.ok) {
-        console.warn(`[bouncie] trips ${imei} ${r.status}`);
-        continue;
-      }
-      const trips: any[] = await r.json();
-      for (const t of trips) {
-        const startMs = new Date(t.startTime).getTime();
-        const endMs = new Date(t.endTime).getTime();
-        const totalSec = Math.max(0, (endMs - startMs) / 1000);
-        const idleSec = t.totalIdleDuration || 0;
-        const driveSec = Math.max(0, totalSec - idleSec);
-        repStats[rep].tripCount += 1;
-        repStats[rep].driveTimeMin += driveSec / 60;
-        repStats[rep].idleTimeMin += idleSec / 60;
-        repStats[rep].totalTimeMin += totalSec / 60;
-        repStats[rep].distanceMi += t.distance || 0;
-        repStats[rep].hardBrakes += t.hardBrakingCount || 0;
-        repStats[rep].hardAccels += t.hardAccelerationCount || 0;
+      if (r.ok) {
+        const trips: any[] = await r.json();
+        for (const t of trips) {
+          const startMs = new Date(t.startTime).getTime();
+          const endMs = new Date(t.endTime).getTime();
+          const totalSec = Math.max(0, (endMs - startMs) / 1000);
+          const idleSec = t.totalIdleDuration || 0;
+          const driveSec = Math.max(0, totalSec - idleSec);
+          repStats[rep].tripCount += 1;
+          repStats[rep].driveTimeMin += driveSec / 60;
+          repStats[rep].idleTimeMin += idleSec / 60;
+          repStats[rep].totalTimeMin += totalSec / 60;
+          repStats[rep].distanceMi += t.distance || 0;
+          repStats[rep].hardBrakes += t.hardBrakingCount || 0;
+          repStats[rep].hardAccels += t.hardAccelerationCount || 0;
+        }
+        tripsLoaded = true;
+      } else {
+        console.warn(`[bouncie] trips ${imei} ${r.status} — attempting GPS-history fallback`);
       }
     } catch (e: any) {
-      console.warn(`[bouncie] trips err ${imei}: ${e?.message}`);
+      console.warn(`[bouncie] trips err ${imei}: ${e?.message} — attempting GPS-history fallback`);
+    }
+
+    // ----------------------------------------------------------------
+    // GPS-history fallback. /trips has been HTTP 500 since 5/18 — we
+    // estimate drive time from raw GPS pings instead. Bouncie exposes
+    // location history via two possible endpoints (we try both):
+    //   1. /vehicles/{imei}/locations?starts-after=...
+    //   2. /locations?imei={imei}&starts-after=...
+    // We reconstruct trips by clustering pings: a trip starts when the
+    // vehicle moves (>0 mph or position changed) and ends after a 5min
+    // gap of no movement. Distance is summed via great-circle between
+    // consecutive moving pings.
+    // ----------------------------------------------------------------
+    if (!tripsLoaded) {
+      const fallbackResult = await reconstructTripsFromHistory(
+        token, imei, startsAfter, fetchedAt,
+      );
+      if (fallbackResult) {
+        const s = repStats[rep];
+        s.tripCount += fallbackResult.tripCount;
+        s.driveTimeMin += fallbackResult.driveTimeMin;
+        s.idleTimeMin += fallbackResult.idleTimeMin;
+        s.totalTimeMin += fallbackResult.totalTimeMin;
+        s.distanceMi += fallbackResult.distanceMi;
+        s.source = "history-fallback";
+        s.fallbackNote = `estimated from ${fallbackResult.pingCount} GPS pings (Bouncie /trips returning 500)`;
+      } else {
+        repStats[rep].source = "unavailable";
+        repStats[rep].fallbackNote = "Bouncie /trips and /locations endpoints both unavailable";
+      }
     }
   }
 
@@ -260,5 +295,115 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
       r => !Object.values(REP_BY_IMEI).includes(r)
     ),
     locations,
+  };
+}
+
+// ============================================================
+// GPS history -> reconstructed trips.
+// Tries two Bouncie endpoints in order; returns null if both fail.
+// ============================================================
+interface ReconstructedTrips {
+  tripCount: number;
+  driveTimeMin: number;
+  idleTimeMin: number;
+  totalTimeMin: number;
+  distanceMi: number;
+  pingCount: number;
+}
+
+async function reconstructTripsFromHistory(
+  token: string,
+  imei: string,
+  startsAfter: string,
+  _fetchedAt: string,
+): Promise<ReconstructedTrips | null> {
+  // Try multiple endpoints (Bouncie has changed paths historically)
+  const endpoints = [
+    `${BOUNCIE_API}/vehicles/${imei}/locations?starts-after=${encodeURIComponent(startsAfter)}`,
+    `${BOUNCIE_API}/locations?imei=${imei}&starts-after=${encodeURIComponent(startsAfter)}`,
+  ];
+  let pings: any[] | null = null;
+  for (const url of endpoints) {
+    try {
+      const r = await fetch(url, { headers: { Authorization: token } });
+      if (r.ok) {
+        const j = await r.json();
+        pings = Array.isArray(j) ? j : (j?.locations || j?.data || null);
+        if (pings && pings.length > 0) break;
+      }
+    } catch {
+      // try next endpoint
+    }
+  }
+  if (!pings || pings.length === 0) return null;
+
+  // Normalize and sort
+  const norm = pings
+    .map(p => ({
+      ts: new Date(p.timestamp || p.time || p.lastUpdated || 0).getTime(),
+      lat: Number(p.lat ?? p.latitude),
+      lng: Number(p.lon ?? p.lng ?? p.longitude),
+      speed: Number(p.speed ?? 0),
+    }))
+    .filter(p => p.ts > 0 && Number.isFinite(p.lat) && Number.isFinite(p.lng))
+    .sort((a, b) => a.ts - b.ts);
+
+  if (norm.length < 2) return null;
+
+  // Cluster into trips: gap >= 5 min of no movement starts a new trip
+  const TRIP_GAP_MS = 5 * 60 * 1000;
+  const MOVING_SPEED_MPH = 2; // below this, treat as idle
+  type Trip = { startTs: number; endTs: number; driveSec: number; idleSec: number; distanceMi: number };
+  const trips: Trip[] = [];
+  let cur: Trip | null = null;
+
+  function haversineMi(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+    const R = 3959;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const aa = Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(aa));
+  }
+
+  for (let i = 0; i < norm.length; i++) {
+    const p = norm[i];
+    if (!cur) {
+      cur = { startTs: p.ts, endTs: p.ts, driveSec: 0, idleSec: 0, distanceMi: 0 };
+      continue;
+    }
+    const gap = p.ts - cur.endTs;
+    if (gap > TRIP_GAP_MS) {
+      // close current trip if it has duration
+      if (cur.endTs - cur.startTs > 60_000) trips.push(cur);
+      cur = { startTs: p.ts, endTs: p.ts, driveSec: 0, idleSec: 0, distanceMi: 0 };
+      continue;
+    }
+    const prev = norm[i - 1];
+    const dtSec = (p.ts - prev.ts) / 1000;
+    const dist = haversineMi(prev, p);
+    const moving = p.speed >= MOVING_SPEED_MPH || dist > 0.05;
+    if (moving) {
+      cur.driveSec += dtSec;
+      cur.distanceMi += dist;
+    } else {
+      cur.idleSec += dtSec;
+    }
+    cur.endTs = p.ts;
+  }
+  if (cur && cur.endTs - cur.startTs > 60_000) trips.push(cur);
+
+  const driveTimeMin = trips.reduce((s, t) => s + t.driveSec / 60, 0);
+  const idleTimeMin = trips.reduce((s, t) => s + t.idleSec / 60, 0);
+  const distanceMi = trips.reduce((s, t) => s + t.distanceMi, 0);
+
+  return {
+    tripCount: trips.length,
+    driveTimeMin,
+    idleTimeMin,
+    totalTimeMin: driveTimeMin + idleTimeMin,
+    distanceMi,
+    pingCount: norm.length,
   };
 }

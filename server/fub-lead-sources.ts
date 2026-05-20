@@ -102,8 +102,18 @@ export async function fetchLeadSourceData(
       }
     }
 
-    // Pull recent AQ deals (Under Contract) to count contracts-per-source
-    const aqDeals = await paginate<any>(apiKey, `/v1/deals?pipelineId=2&sort=-updated`, "deals", controller.signal, 10);
+    // Pull deals from Underwriting (14) and Disposition (1) pipelines.
+    // Reason: this team's contract signal is when a deal CROSSES OVER from AQ
+    // pipeline (id=2) into Underwriting (id=14). Sometimes deals fast-track
+    // into Disposition (id=1) directly. The legacy approach checked
+    // d.stage === "Under Contract" inside the AQ pipeline, but FUB's `stage`
+    // field is always null for this org and the AQ pipeline has no
+    // "Under Contract" stage, so the count was always 0.
+    const [uwDeals, dispoDeals] = await Promise.all([
+      paginate<any>(apiKey, `/v1/deals?pipelineId=14&sort=-updated`, "deals", controller.signal, 10),
+      paginate<any>(apiKey, `/v1/deals?pipelineId=1&sort=-updated`, "deals", controller.signal, 10),
+    ]);
+    const contractDeals = [...uwDeals, ...dispoDeals];
 
     clearTimeout(timer);
 
@@ -125,18 +135,23 @@ export async function fetchLeadSourceData(
       if ((p.appointmentCount || 0) > 0) b.appts += 1;
     }
 
-    // Count contracts in window — deal has UC stage entered in window
+    // Count contracts in window — a deal entered Underwriting or Disposition
+    // pipeline within the window. Dedupe by deal id in case the same deal
+    // crossed both pipelines.
     const cutoffMs = startMs;
-    for (const d of aqDeals) {
-      const stage = (d.stage || "").toLowerCase();
-      if (!stage.includes("under contract")) continue;
-      const entered = d.enteredStageAt ? new Date(d.enteredStageAt).getTime() : 0;
-      if (entered < cutoffMs) continue;
+    const counted = new Set<number>();
+    for (const d of contractDeals) {
+      if (!d?.id || counted.has(d.id)) continue;
+      const entered = d.enteredStageAt
+        ? new Date(d.enteredStageAt).getTime()
+        : (d.created ? new Date(d.created).getTime() : 0);
+      if (!entered || entered < cutoffMs) continue;
       const pid = d.people?.[0]?.id;
       if (!pid) continue;
       const src = sourceByPerson.get(pid);
       if (src) {
         bucket(src).contracts += 1;
+        counted.add(d.id);
       }
     }
 

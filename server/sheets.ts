@@ -1212,6 +1212,80 @@ export async function fetchAllKpiData() {
       .replace(/\s+/g, " ")
       .trim();
   }
+
+  // ---------- Fuzzy address fallback helpers ----------
+  // Used when a FUB UC key doesn't directly match a Rev Tracker close key.
+  // Two strategies, tried in order:
+  //   1. Token-set Jaccard overlap (>= 0.6 with shared tokens >= 2 OR
+  //      single-token keys that match exactly after singular/plural strip)
+  //   2. Levenshtein edit distance <= 2 on the joined key (handles typos like
+  //      "hetaher" vs "heather" or "dupre" vs "dupree")
+  function tokenSet(k: string): Set<string> {
+    return new Set(k.split(/\s+/).filter(t => t.length >= 2));
+  }
+  function jaccard(a: Set<string>, b: Set<string>): number {
+    if (a.size === 0 || b.size === 0) return 0;
+    let inter = 0;
+    for (const t of a) if (b.has(t)) inter++;
+    const union = a.size + b.size - inter;
+    return union > 0 ? inter / union : 0;
+  }
+  function levenshtein(a: string, b: string): number {
+    if (a === b) return 0;
+    if (!a.length) return b.length;
+    if (!b.length) return a.length;
+    const m = a.length, n = b.length;
+    let prev = new Array(n + 1).fill(0);
+    let curr = new Array(n + 1).fill(0);
+    for (let j = 0; j <= n; j++) prev[j] = j;
+    for (let i = 1; i <= m; i++) {
+      curr[0] = i;
+      for (let j = 1; j <= n; j++) {
+        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+        curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+      }
+      [prev, curr] = [curr, prev];
+    }
+    return prev[n];
+  }
+  function fuzzyFindBestMatch(
+    fubKey: string,
+    candidates: string[],
+  ): { key: string; score: number; method: string } | null {
+    if (!fubKey) return null;
+    const fubTokens = tokenSet(fubKey);
+    let best: { key: string; score: number; method: string } | null = null;
+    for (const c of candidates) {
+      if (!c) continue;
+      // Strategy 1: token Jaccard
+      const cTokens = tokenSet(c);
+      const j = jaccard(fubTokens, cTokens);
+      let inter = 0;
+      for (const t of fubTokens) if (cTokens.has(t)) inter++;
+      // Require Jaccard >= 0.6 with at least 2 shared tokens, OR single-token
+      // keys where the only token matches.
+      const tokenOk =
+        (j >= 0.6 && inter >= 2) ||
+        (fubTokens.size === 1 && cTokens.size === 1 && j === 1);
+      if (tokenOk && (!best || j > best.score)) {
+        best = { key: c, score: j, method: "token" };
+      }
+      // Strategy 2: Levenshtein on joined key (cheap fallback for typos).
+      // Only consider when keys are similar length (within 4 chars) to avoid
+      // huge cross-matches.
+      if (Math.abs(fubKey.length - c.length) <= 4) {
+        const d = levenshtein(fubKey, c);
+        const maxLen = Math.max(fubKey.length, c.length);
+        if (d <= 2 && maxLen >= 5) {
+          const score = 1 - d / maxLen;
+          if (!best || score > best.score) {
+            best = { key: c, score, method: "lev" };
+          }
+        }
+      }
+    }
+    return best;
+  }
   const ucByName = new Map<string, Date>();
   // Pull UC dates from acqFub.dealsWithUC (added in fub-acquisitions.ts) — that
   // covers AQ + Dispo + Novations + Flips + Listing-Referrals pipelines.
@@ -1231,12 +1305,24 @@ export async function fetchAllKpiData() {
     }
   }
   const dtcSamples: { deal: string; days: number }[] = [];
+  let exactMatches = 0;
+  let fuzzyMatches = 0;
+  const closeKeys = Array.from(closeByName.keys());
   for (const [name, ucDate] of ucByName.entries()) {
-    const closeDate = closeByName.get(name);
+    let closeDate = closeByName.get(name);
+    let method = "exact";
+    if (!closeDate) {
+      const fuzzy = fuzzyFindBestMatch(name, closeKeys);
+      if (fuzzy) {
+        closeDate = closeByName.get(fuzzy.key);
+        method = `fuzzy-${fuzzy.method}`;
+      }
+    }
     if (closeDate) {
       const days = Math.round((closeDate.getTime() - ucDate.getTime()) / (24 * 3600 * 1000));
       if (days >= 0 && days < 365) {
         dtcSamples.push({ deal: name.slice(0, 60), days });
+        if (method === "exact") exactMatches++; else fuzzyMatches++;
       }
     }
   }
@@ -1257,9 +1343,11 @@ export async function fetchAllKpiData() {
     fubFound: ucByName.size,
     revTrackerFound: closeByName.size,
     matched: dtcSamples.length,
-    method: "street-name join: FUB underContractDate ↔ Rev Tracker close date",
+    exactMatches,
+    fuzzyMatches,
+    method: "street-name join (exact + token Jaccard + Levenshtein fallback) — FUB UC date ↔ Rev Tracker close date",
   };
-  console.log(`[sheets] Days-to-close: avg ${dtcAvg}d, median ${dtcMedian}d (n=${dtcSamples.length}; FUB UC=${ucByName.size}, RT close=${closeByName.size})`);
+  console.log(`[sheets] Days-to-close: avg ${dtcAvg}d, median ${dtcMedian}d (n=${dtcSamples.length}; exact=${exactMatches}, fuzzy=${fuzzyMatches}; FUB UC=${ucByName.size}, RT close=${closeByName.size})`);
 
   // ================================================================
   // PHASE 8: REVENUE TRACKER IS NOW THE SOURCE OF TRUTH FOR REVENUE
@@ -1782,29 +1870,62 @@ export async function fetchAllKpiData() {
 
   // ================================================================
   // 5. MARKETING CHANNELS
+  // ----------------------------------------------------------------
+  // Header-based lookup: tolerate alias drift on the Marketing 2026
+  // KPIs tab (e.g. "Cost" → "Spend", "Estimated Revenue" → "Est Rev").
+  // We resolve each logical column to whichever real header best
+  // matches a list of aliases (case-insensitive, trimmed).
   // ================================================================
   const mktg = sheets.mktg || { headers: [], rows: [], rowCount: 0 };
+  const mktgHeaders: string[] = (mktg.headers || []).map((h: any) => String(h || ""));
+  function resolveHeader(aliases: string[]): string | null {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "").trim();
+    const wanted = aliases.map(norm);
+    for (const h of mktgHeaders) {
+      const hn = norm(h);
+      if (wanted.includes(hn)) return h;
+    }
+    // Loose contains-fallback: header that contains any alias as substring.
+    for (const h of mktgHeaders) {
+      const hn = norm(h);
+      if (wanted.some(w => w && (hn.includes(w) || w.includes(hn)))) return h;
+    }
+    return null;
+  }
+  const COL = {
+    leadFunnel: resolveHeader(["Lead Funnels", "Lead Funnel", "Channel", "Source"]) || "Lead Funnels",
+    id: resolveHeader(["ID", "#"]) || "ID",
+    cost: resolveHeader(["Cost", "Spend", "Marketing Spend"]) || "Cost",
+    grossLeads: resolveHeader(["Gross Leads", "Leads", "Gross"]) || "Gross Leads",
+    netLeads: resolveHeader(["Net Leads", "Net", "Qualified Leads"]) || "Net Leads",
+    deals: resolveHeader(["Deals", "Closed", "Closed Deals", "Contracts"]) || "Deals",
+    conversion: resolveHeader(["Conversion Rate %", "Conversion", "Conv %", "Conversion %"]) || "Conversion Rate %",
+    costPerDeal: resolveHeader(["Cost Per Deal", "CPD", "Cost/Deal"]) || "Cost Per Deal",
+    revenue: resolveHeader(["Estimated Revenue", "Revenue", "Est Revenue", "Est Rev"]) || "Estimated Revenue",
+    roas: resolveHeader(["ROAS", "Return"]) || "ROAS",
+  };
+  console.log(`[sheets] Marketing 2026 column resolution: ${JSON.stringify(COL)}`);
   const channelRows = mktg.rows.filter((r) => {
-    const lf = String(r["Lead Funnels"] || "").trim();
+    const lf = String(r[COL.leadFunnel] || "").trim();
     if (!lf) return false;
     // Skip any TOTALS-style row (e.g. "TOTALS - Marketing")
     if (lf.toUpperCase().startsWith("TOTAL")) return false;
-    return r["ID"] && parseInt2(r["ID"]) > 0 && parseInt2(r["ID"]) <= 10;
+    return r[COL.id] && parseInt2(r[COL.id]) > 0 && parseInt2(r[COL.id]) <= 10;
   });
   const marketingChannels = channelRows.map((r) => ({
-    name: r["Lead Funnels"],
-    spend: parseMoney(r["Cost"]),
-    gross_leads: parseInt2(r["Gross Leads"]),
-    net_leads: parseInt2(r["Net Leads"]),
-    deals: parseInt2(r["Deals"]),
-    conversion: parsePct(r["Conversion Rate %"]) ?? 0,
-    cost_per_deal: parseMoney(r["Cost Per Deal"]),
-    revenue: parseMoney(r["Estimated Revenue"]),
-    roas: r["ROAS"] ? parseFloat(r["ROAS"].replace("%", "").replace(/,/g, "")) / 100 : null,
+    name: r[COL.leadFunnel],
+    spend: parseMoney(r[COL.cost]),
+    gross_leads: parseInt2(r[COL.grossLeads]),
+    net_leads: parseInt2(r[COL.netLeads]),
+    deals: parseInt2(r[COL.deals]),
+    conversion: parsePct(r[COL.conversion]) ?? 0,
+    cost_per_deal: parseMoney(r[COL.costPerDeal]),
+    revenue: parseMoney(r[COL.revenue]),
+    roas: r[COL.roas] ? parseFloat(String(r[COL.roas]).replace("%", "").replace(/,/g, "")) / 100 : null,
   }));
   // Marketing TOTALS row — match anything starting with "TOTAL" (e.g. "TOTALS - Marketing ")
   const totalsRow = mktg.rows.find((r) => {
-    const lf = String(r["Lead Funnels"] || "").trim().toUpperCase();
+    const lf = String(r[COL.leadFunnel] || "").trim().toUpperCase();
     return lf.startsWith("TOTAL");
   });
   // Sum from per-channel rows. Always preferred when non-zero — the TOTALS row
@@ -1817,11 +1938,11 @@ export async function fetchAllKpiData() {
   const sumRev   = marketingChannels.reduce((s, c) => s + (c.revenue    || 0), 0);
 
   const marketingTotals = {
-    spend:        sumSpend > 0 ? sumSpend : (totalsRow ? parseMoney(totalsRow["Cost"])              : 0),
-    gross_leads:  sumGross > 0 ? sumGross : (totalsRow ? parseInt2(totalsRow["Gross Leads"])         : 0),
-    net_leads:    sumNet   > 0 ? sumNet   : (totalsRow ? parseInt2(totalsRow["Net Leads"])           : 0),
-    deals:        sumDeals > 0 ? sumDeals : (totalsRow ? parseInt2(totalsRow["Deals"])               : 0),
-    revenue:      sumRev   > 0 ? sumRev   : (totalsRow ? parseMoney(totalsRow["Estimated Revenue"])  : 0),
+    spend:        sumSpend > 0 ? sumSpend : (totalsRow ? parseMoney(totalsRow[COL.cost])         : 0),
+    gross_leads:  sumGross > 0 ? sumGross : (totalsRow ? parseInt2(totalsRow[COL.grossLeads])    : 0),
+    net_leads:    sumNet   > 0 ? sumNet   : (totalsRow ? parseInt2(totalsRow[COL.netLeads])      : 0),
+    deals:        sumDeals > 0 ? sumDeals : (totalsRow ? parseInt2(totalsRow[COL.deals])         : 0),
+    revenue:      sumRev   > 0 ? sumRev   : (totalsRow ? parseMoney(totalsRow[COL.revenue])      : 0),
     conversion: 0 as number,    // computed below
     cost_per_deal: 0 as number, // computed below
     roas: 0 as number,          // computed below
@@ -1832,10 +1953,10 @@ export async function fetchAllKpiData() {
   // show 0.0% and $0 even though there were 67 deals on $409K spend.
   marketingTotals.conversion = marketingTotals.net_leads > 0
     ? marketingTotals.deals / marketingTotals.net_leads
-    : (totalsRow ? (parsePct(totalsRow["Conversion Rate %"]) ?? 0) : 0);
+    : (totalsRow ? (parsePct(totalsRow[COL.conversion]) ?? 0) : 0);
   marketingTotals.cost_per_deal = marketingTotals.deals > 0
     ? marketingTotals.spend / marketingTotals.deals
-    : (totalsRow ? parseMoney(totalsRow["Cost Per Deal"]) : 0);
+    : (totalsRow ? parseMoney(totalsRow[COL.costPerDeal]) : 0);
   marketingTotals.roas = marketingTotals.spend > 0
     ? Math.round((marketingTotals.revenue / marketingTotals.spend) * 100) / 100
     : 0;
@@ -3424,6 +3545,16 @@ export async function fetchAllKpiData() {
       bouncie:          { fetchedAt: bouncie.fetchedAt, source: "bouncie" },
       leadSources:      { fetchedAt: leadSourcesData.fetchedAt, error: leadSourcesData.error, source: "fub" },
       computedAt:       new Date().toISOString(),
+      staleAlerts:      computeStaleAlerts({
+                          ytdRevenue: ytd.revenue,
+                          marketingSpend: marketingTotals.spend,
+                          marketingDeals: marketingTotals.deals,
+                          leadSourceContracts: leadSourcesData.totalContracts,
+                          leadSourceLeads: leadSourcesData.totalLeads,
+                          daysToCloseSamples: daysToClose.matched,
+                          bouncieReps: bouncie.reps.length,
+                          fubAcqContracts: acqFub.totals?.contracts || 0,
+                        }),
     },
     dispoFub,
     mailchimp,
@@ -3500,6 +3631,66 @@ function buildBouncieMock() {
     byAgent[k].avgMiles = Math.round(byAgent[k].totalMiles / byAgent[k].days);
   }
   return { byAgent, daily: days, source: "mock" as const, lastUpdated: new Date().toISOString() };
+}
+
+// ========== STALE-TILE HEALTH CHECK ==========
+// Tracks the last time each KPI tile returned a non-zero value. When a tile
+// flips to 0/empty AND has been zero for >24h, emit an alert. This catches
+// silent failures like API token expiry, schema drift, or pipeline outages
+// that don't throw an error but quietly zero out a metric.
+
+interface StaleAlert {
+  tile: string;
+  currentValue: number;
+  lastSeenNonZero: string; // ISO timestamp
+  hoursSinceNonZero: number;
+  severity: "warn" | "error";
+}
+
+const STALE_TILE_FILE = "/tmp/mths-kpi-stale-tiles.json";
+const STALE_THRESHOLD_HOURS = 24;
+
+function loadStaleTracker(): Record<string, string> {
+  try {
+    return JSON.parse(readFileSync(STALE_TILE_FILE, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+function saveStaleTracker(t: Record<string, string>) {
+  try { writeFileSync(STALE_TILE_FILE, JSON.stringify(t)); } catch (_) {}
+}
+
+function computeStaleAlerts(values: Record<string, number>): StaleAlert[] {
+  const tracker = loadStaleTracker();
+  const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
+  const alerts: StaleAlert[] = [];
+  for (const [tile, v] of Object.entries(values)) {
+    if (v && v > 0) {
+      tracker[tile] = nowIso;  // last seen non-zero = now
+      continue;
+    }
+    // value is 0 / empty — check how long it has been so
+    const lastNonZero = tracker[tile];
+    if (!lastNonZero) {
+      // never seen non-zero yet — record now and skip alerting
+      tracker[tile] = nowIso;
+      continue;
+    }
+    const ageHours = (nowMs - new Date(lastNonZero).getTime()) / 3_600_000;
+    if (ageHours >= STALE_THRESHOLD_HOURS) {
+      alerts.push({
+        tile,
+        currentValue: v || 0,
+        lastSeenNonZero: lastNonZero,
+        hoursSinceNonZero: Math.round(ageHours),
+        severity: ageHours >= 72 ? "error" : "warn",
+      });
+    }
+  }
+  saveStaleTracker(tracker);
+  return alerts;
 }
 
 // ========== RESILIENT CACHE ==========
