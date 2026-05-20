@@ -323,18 +323,25 @@ async function reconstructTripsFromHistory(
     `${BOUNCIE_API}/locations?imei=${imei}&starts-after=${encodeURIComponent(startsAfter)}`,
   ];
   let pings: any[] | null = null;
+  const probeResults: string[] = [];
   for (const url of endpoints) {
     try {
       const r = await fetch(url, { headers: { Authorization: token } });
+      const shortUrl = url.replace(BOUNCIE_API, "").split("?")[0];
       if (r.ok) {
         const j = await r.json();
         pings = Array.isArray(j) ? j : (j?.locations || j?.data || null);
+        const count = pings?.length || 0;
+        probeResults.push(`${shortUrl}=200(${count})`);
         if (pings && pings.length > 0) break;
+      } else {
+        probeResults.push(`${shortUrl}=${r.status}`);
       }
-    } catch {
-      // try next endpoint
+    } catch (e: any) {
+      probeResults.push(`err:${e?.message?.slice(0, 40)}`);
     }
   }
+  console.log(`[bouncie] history-fallback ${imei}: ${probeResults.join(" | ")}`);
   if (!pings || pings.length === 0) return null;
 
   // Normalize and sort
