@@ -1997,11 +1997,14 @@ export async function fetchAllKpiData() {
   const wkTotalGross = weeklyMarketing?.totals?.grossLead || 0;
   const wkTotalNet = weeklyMarketing?.totals?.netLead || 0;
 
-  if (mktTotalGross > ytd.gross_leads) {
+  // Per 5/20 review: Marketing 2026 KPIs is the SOURCE OF TRUTH for net leads,
+  // not Sales KPIs. Always prefer Marketing totals when present; only fall back
+  // to Weekly Marketing or Sales KPIs if Marketing has zero data.
+  if (mktTotalNet > 0 || mktTotalGross > 0) {
     ytd.gross_leads = mktTotalGross;
     ytd.net_leads = mktTotalNet;
     ytd._leadSource = "marketing_2026_kpis_totals";
-  } else if (wkTotalGross > ytd.gross_leads) {
+  } else if (wkTotalNet > 0 || wkTotalGross > 0) {
     ytd.gross_leads = wkTotalGross;
     ytd.net_leads = wkTotalNet;
     ytd._leadSource = "weekly_marketing_tab";
