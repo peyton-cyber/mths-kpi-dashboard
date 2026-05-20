@@ -843,6 +843,9 @@ export default function Overview() {
         </Section>
       )}
 
+      {/* Current Deals Snapshot — added 5/20 review */}
+      <CurrentDealsSection data={data as any} />
+
       {/* Pipeline trend */}
       <Section title="Pipeline Trend" subtitle={pipelineSubtitle}>
         <Card padding="p-5">
@@ -1054,4 +1057,104 @@ export default function Overview() {
       )}
     </div>
   );
+}
+
+// ============================================================================
+// CurrentDealsSection — added 5/20 review.
+// Renders the live Current Deals snapshot (DD/UC/close dates, phase, projected
+// revenue, attribution). Gracefully no-ops if the backend hasn't shipped yet.
+// ============================================================================
+function CurrentDealsSection({ data }: { data: any }) {
+  const cd = data.currentDeals as
+    | {
+        activeDeals: Array<{
+          address: string; city: string; phase: string; phaseRank: number;
+          leadSource: string; dealType: string; leadManager: string; aqAgent: string;
+          ddDate: string; ucDate: string; closeDate: string; dateAssigned: string;
+          projectedRevenue: number; ageDays: number | null;
+        }>;
+        byPhase: Record<string, { count: number; projectedRevenue: number }>;
+        byDealType: Record<string, { count: number; projectedRevenue: number }>;
+        summary: { totalOpen: number; totalProjectedRevenue: number; avgProjectedPerDeal: number; underContract: number; pushedToBuyer: number; assigned: number };
+      }
+    | undefined;
+  if (!cd || !cd.activeDeals?.length) return null;
+  const sorted = [...cd.activeDeals].sort((a, b) => b.phaseRank - a.phaseRank);
+  const top = sorted.slice(0, 25);
+  return (
+    <Section
+      title="Current Deals Snapshot"
+      subtitle={`${cd.summary.totalOpen} open deals • ${fmtMoney(cd.summary.totalProjectedRevenue)} projected (sale > assigned > pushed > purchase)`}
+    >
+      <div className="grid grid-cols-12 gap-3 mb-3">
+        <Card className="col-span-12 md:col-span-3" padding="p-4">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">Open Deals</div>
+          <div className="text-2xl font-bold tabular mt-1">{cd.summary.totalOpen}</div>
+          <div className="text-xs text-muted-foreground mt-1">avg {fmtMoney(cd.summary.avgProjectedPerDeal)} / deal</div>
+        </Card>
+        <Card className="col-span-12 md:col-span-3" padding="p-4">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">Under Contract</div>
+          <div className="text-2xl font-bold tabular mt-1">{cd.summary.underContract}</div>
+          <div className="text-xs text-muted-foreground mt-1">awaiting buyer push</div>
+        </Card>
+        <Card className="col-span-12 md:col-span-3" padding="p-4">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">Pushed to Buyer</div>
+          <div className="text-2xl font-bold tabular mt-1">{cd.summary.pushedToBuyer}</div>
+          <div className="text-xs text-muted-foreground mt-1">awaiting assignment</div>
+        </Card>
+        <Card className="col-span-12 md:col-span-3" padding="p-4">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">Assigned</div>
+          <div className="text-2xl font-bold tabular mt-1">{cd.summary.assigned}</div>
+          <div className="text-xs text-muted-foreground mt-1">scheduled to close</div>
+        </Card>
+      </div>
+      <Card padding="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground border-b border-border">
+              <tr>
+                <th className="py-2.5 px-3 text-left font-semibold">Address</th>
+                <th className="py-2.5 px-3 text-left font-semibold">Phase</th>
+                <th className="py-2.5 px-3 text-left font-semibold">Deal Type</th>
+                <th className="py-2.5 px-3 text-left font-semibold">AQ · LM</th>
+                <th className="py-2.5 px-3 text-right font-semibold">DD</th>
+                <th className="py-2.5 px-3 text-right font-semibold">UC</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Assigned</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Close</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Projected $</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {top.map((d, i) => (
+                <tr key={i} className="hover:bg-muted/30">
+                  <td className="py-2 px-3 font-semibold">{d.address}<div className="text-[11px] text-muted-foreground font-normal">{d.city}</div></td>
+                  <td className="py-2 px-3"><span className="inline-flex items-center gap-1.5 text-[12px]"><span className={`inline-block w-2 h-2 rounded-full ${phaseColor(d.phaseRank)}`}/>{d.phase}</span></td>
+                  <td className="py-2 px-3 text-[12px]">{d.dealType}</td>
+                  <td className="py-2 px-3 text-[12px]"><span className="font-medium">{d.aqAgent || "—"}</span>{d.leadManager ? <span className="text-muted-foreground"> · {d.leadManager}</span> : null}</td>
+                  <td className="py-2 px-3 text-right tabular text-[12px]">{d.ddDate || "—"}</td>
+                  <td className="py-2 px-3 text-right tabular text-[12px]">{d.ucDate || "—"}</td>
+                  <td className="py-2 px-3 text-right tabular text-[12px]">{d.dateAssigned || "—"}</td>
+                  <td className="py-2 px-3 text-right tabular text-[12px]">{d.closeDate || "—"}</td>
+                  <td className="py-2 px-3 text-right tabular font-semibold">{d.projectedRevenue > 0 ? fmtMoney(d.projectedRevenue) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {sorted.length > top.length ? (
+          <div className="text-xs text-muted-foreground px-3 py-2 border-t border-border">
+            Showing top {top.length} of {sorted.length} open deals (sorted by phase → newest).
+          </div>
+        ) : null}
+      </Card>
+    </Section>
+  );
+}
+
+function phaseColor(rank: number): string {
+  // Higher rank = closer to close. Use semantic dashboard tokens.
+  if (rank >= 7) return "bg-[hsl(var(--status-green))]";   // Assigned
+  if (rank >= 5) return "bg-[hsl(var(--baby-blue-500))]";  // UC/Pushed
+  if (rank >= 3) return "bg-[hsl(var(--status-amber))]";   // Appt set/exec
+  return "bg-[hsl(var(--status-red))]";                    // Lead/Unknown
 }

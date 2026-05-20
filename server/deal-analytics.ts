@@ -49,6 +49,39 @@ function clean(v: any): string {
   const s = String(v ?? "").trim();
   return NULLISH.has(s) ? "" : s;
 }
+
+/**
+ * Normalize person-name casing: "Tj Neal" vs "TJ Neal" should match. We
+ * Title-Case each token, but preserve known short uppercase forms (TJ, JJ,
+ * AJ, DJ, etc.) and the common LM/AQA names used at MTHS.
+ */
+const KNOWN_NAMES: Record<string, string> = {
+  "tj neal": "TJ Neal",
+  "jj": "JJ",
+  "aj": "AJ",
+  "dj": "DJ",
+  "jeff h": "Jeff Henry",
+  "jeff henry": "Jeff Henry",
+  "jeff hentry": "Jeff Henry",
+  "johnathan medlin": "Jonathan Medlin",
+  "jonathan medlin": "Jonathan Medlin",
+  "korbin hoffmann": "Korbin Hoffmann",
+  "brandon speer": "Brandon Speer",
+  "ryan craig": "Ryan Craig",
+  "ryan newton": "Ryan Newton",
+};
+function normalizeName(s: string): string {
+  const trimmed = s.trim();
+  if (!trimmed) return "";
+  const key = trimmed.toLowerCase();
+  if (KNOWN_NAMES[key]) return KNOWN_NAMES[key];
+  // Generic Title Case as fallback
+  return trimmed.split(/\s+/).map((tok) => {
+    const lc = tok.toLowerCase();
+    if (KNOWN_NAMES[lc]) return KNOWN_NAMES[lc];
+    return lc.charAt(0).toUpperCase() + lc.slice(1);
+  }).join(" ");
+}
 function money(v: any): number {
   const n = parseFloat(String(v ?? "").replace(/[$,\s]/g, ""));
   return Number.isFinite(n) ? n : 0;
@@ -134,9 +167,9 @@ function rowToDeal(row: any, idx: number): CurrentDeal {
     isOpen,
     leadSource: clean(row[COL.marketingLeadSource]),
     dealType: clean(row[COL.dealType]) || "Unspecified",
-    leadManager: clean(row[COL.leadManager]),
-    aqAgent: clean(row[COL.aqAgent]),
-    dispoManager: clean(row[COL.dispoManager]),
+    leadManager: normalizeName(clean(row[COL.leadManager])),
+    aqAgent: normalizeName(clean(row[COL.aqAgent])),
+    dispoManager: normalizeName(clean(row[COL.dispoManager])),
     tc: clean(row[COL.tc]),
     ddDate: isoOf(clean(row[COL.pushedDate])),
     ucDate: isoOf(clean(row[COL.uc])),
@@ -328,8 +361,8 @@ export function buildLmAqCombos(rows: any[], windowDays: number = 90): {
   for (const r of rows) {
     const cd = parseFlexDate(clean(r[COL.closeDate]));
     if (!cd || cd.getTime() < cutoff) continue;
-    const lm = clean(r[COL.leadManager]) || "Unassigned";
-    const aq = clean(r[COL.aqAgent]) || "Unassigned";
+    const lm = normalizeName(clean(r[COL.leadManager])) || "Unassigned";
+    const aq = normalizeName(clean(r[COL.aqAgent])) || "Unassigned";
     const key = `${lm}__${aq}`;
     if (!stat[key]) stat[key] = { lm, aq, deals: 0, profit: 0 };
     stat[key].deals += 1;

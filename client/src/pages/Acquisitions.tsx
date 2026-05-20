@@ -660,6 +660,178 @@ export default function Acquisitions() {
           </div>
         </Card>
       </div>
+
+      {/* Phase 2 — Marketing → Contract Funnel (Marketing KPI → Hub → contracts) */}
+      <AqFunnelSection data={data as any} />
+
+      {/* Phase 2 — Deal Type segmentation (last 90 days closed) */}
+      <DealTypeSegmentationSection data={data as any} />
+
+      {/* Phase 2 — Lead Manager × AQ Agent combos (last 90 days closed) */}
+      <LmAqCombosSection data={data as any} />
     </div>
+  );
+}
+
+// ============================================================================
+// Phase 2 sections — added 5/20 review
+// ============================================================================
+
+function AqFunnelSection({ data }: { data: any }) {
+  const af = data.aqFunnel as { rolling30d?: any; ytd?: any } | undefined;
+  if (!af || (!af.rolling30d && !af.ytd)) return null;
+  return (
+    <Section
+      title="Marketing → Contract Funnel"
+      subtitle="Net leads → set → executed → under contract → closed. Top is Marketing 2026 KPI net leads when available."
+    >
+      <div className="grid grid-cols-12 gap-3">
+        {af.rolling30d ? (
+          <Card className="col-span-12 md:col-span-6" padding="p-5">
+            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium mb-3">Rolling 30 Days</div>
+            <FunnelStages stages={af.rolling30d.stages || []} />
+            <div className="text-[11px] text-muted-foreground mt-3">Source: {af.rolling30d.source}</div>
+          </Card>
+        ) : null}
+        {af.ytd ? (
+          <Card className="col-span-12 md:col-span-6" padding="p-5">
+            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium mb-3">YTD (last 365 days)</div>
+            <FunnelStages stages={af.ytd.stages || []} />
+            <div className="text-[11px] text-muted-foreground mt-3">Source: {af.ytd.source}</div>
+          </Card>
+        ) : null}
+      </div>
+    </Section>
+  );
+}
+
+function FunnelStages({ stages }: { stages: Array<{ label: string; value: number; fromTop: number; fromPrev: number | null }> }) {
+  const top = stages[0]?.value || 0;
+  return (
+    <div className="space-y-2.5">
+      {stages.map((s, i) => {
+        // Cap width at 100% — late stages can artificially exceed top in a small window
+        const widthPct = top > 0 ? Math.min(100, (s.value / top) * 100) : 0;
+        return (
+          <div key={s.label} className="space-y-1">
+            <div className="flex items-baseline justify-between text-[13px]">
+              <span className="font-semibold">{s.label}</span>
+              <span className="tabular text-muted-foreground">
+                <span className="font-semibold text-foreground">{s.value.toLocaleString()}</span>
+                {i > 0 && s.fromPrev !== null ? (
+                  <span className="ml-2">{s.fromPrev > 100 ? "100%+ vs prev" : `${s.fromPrev.toFixed(0)}% vs prev`}</span>
+                ) : null}
+                {i > 0 ? (
+                  <span className="ml-2">{s.fromTop > 100 ? "" : `${s.fromTop.toFixed(0)}% of top`}</span>
+                ) : null}
+              </span>
+            </div>
+            <div className="h-2 bg-muted/40 rounded">
+              <div className="h-2 bg-[hsl(var(--primary))] rounded" style={{ width: `${widthPct}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function DealTypeSegmentationSection({ data }: { data: any }) {
+  const ds = data.dealTypeSegmentation as { windowDays: number; breakdown: any[]; totals: any } | undefined;
+  if (!ds || !ds.breakdown?.length) return null;
+  return (
+    <Section
+      title="Deal Type Segmentation"
+      subtitle={`Last ${ds.windowDays} days closed • ${ds.totals.count} deals • ${fmtMoney(ds.totals.profit)} profit`}
+    >
+      <Card padding="p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground border-b border-border">
+              <tr>
+                <th className="py-2.5 px-3 text-left font-semibold">Deal Type</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Deals</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Gross</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Profit</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Avg Profit</th>
+                <th className="py-2.5 px-3 text-right font-semibold">% of Deals</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {ds.breakdown.map((b: any) => (
+                <tr key={b.dealType} className="hover:bg-muted/30">
+                  <td className="py-2 px-3 font-semibold">{b.dealType}</td>
+                  <td className="py-2 px-3 text-right tabular">{b.count}</td>
+                  <td className="py-2 px-3 text-right tabular">{b.totalGross > 0 ? fmtMoney(b.totalGross) : "—"}</td>
+                  <td className="py-2 px-3 text-right tabular font-semibold">{fmtMoney(b.totalProfit)}</td>
+                  <td className="py-2 px-3 text-right tabular">{fmtMoney(b.avgProfit)}</td>
+                  <td className="py-2 px-3 text-right tabular text-muted-foreground">{ds.totals.count > 0 ? `${Math.round((b.count / ds.totals.count) * 100)}%` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </Section>
+  );
+}
+
+function LmAqCombosSection({ data }: { data: any }) {
+  const lm = data.lmAqCombos as { windowDays: number; topByDeals: any[]; topByProfit: any[] } | undefined;
+  if (!lm || !lm.topByDeals?.length) return null;
+  return (
+    <Section
+      title="Lead Manager × AQ Combos"
+      subtitle={`Top pairs by closed deals (last ${lm.windowDays} days)`}
+    >
+      <div className="grid grid-cols-12 gap-3">
+        <Card className="col-span-12 md:col-span-6" padding="p-0">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium px-4 pt-4 pb-2">By Deals</div>
+          <table className="w-full text-sm">
+            <thead className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground border-b border-border">
+              <tr>
+                <th className="py-2.5 px-3 text-left font-semibold">Lead Manager</th>
+                <th className="py-2.5 px-3 text-left font-semibold">AQ Agent</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Deals</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Profit</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {lm.topByDeals.slice(0, 10).map((c: any, i: number) => (
+                <tr key={`d-${i}`} className="hover:bg-muted/30">
+                  <td className="py-2 px-3 font-semibold">{c.leadManager}</td>
+                  <td className="py-2 px-3">{c.aqAgent}</td>
+                  <td className="py-2 px-3 text-right tabular font-semibold">{c.deals}</td>
+                  <td className="py-2 px-3 text-right tabular">{fmtMoney(c.profit)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+        <Card className="col-span-12 md:col-span-6" padding="p-0">
+          <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium px-4 pt-4 pb-2">By Profit</div>
+          <table className="w-full text-sm">
+            <thead className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground border-b border-border">
+              <tr>
+                <th className="py-2.5 px-3 text-left font-semibold">Lead Manager</th>
+                <th className="py-2.5 px-3 text-left font-semibold">AQ Agent</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Deals</th>
+                <th className="py-2.5 px-3 text-right font-semibold">Profit</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {lm.topByProfit.slice(0, 10).map((c: any, i: number) => (
+                <tr key={`p-${i}`} className="hover:bg-muted/30">
+                  <td className="py-2 px-3 font-semibold">{c.leadManager}</td>
+                  <td className="py-2 px-3">{c.aqAgent}</td>
+                  <td className="py-2 px-3 text-right tabular">{c.deals}</td>
+                  <td className="py-2 px-3 text-right tabular font-semibold">{fmtMoney(c.profit)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      </div>
+    </Section>
   );
 }
