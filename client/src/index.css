@@ -573,6 +573,36 @@
   border-top-color: hsl(var(--popover));
 }
 
+/* Red-variant tooltip — used on red/pulsing tiles to surface recommended
+   action + records link. Higher visual urgency than the neutral (i) tooltip. */
+.kpi-tooltip-icon-red {
+  color: hsl(0 0% 100%);
+  background: hsl(var(--status-red));
+  border-color: hsl(var(--status-red));
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+  animation: kpi-red-icon-pulse 1.8s ease-in-out infinite;
+}
+.kpi-tooltip-red:hover .kpi-tooltip-icon-red,
+.kpi-tooltip-red:focus-visible .kpi-tooltip-icon-red {
+  color: hsl(0 0% 100%);
+  background: hsl(var(--status-red));
+  border-color: hsl(var(--status-red));
+}
+.kpi-tooltip-bubble-red {
+  width: 320px;
+  border-color: hsl(var(--status-red) / 0.5);
+  border-left: 3px solid hsl(var(--status-red));
+}
+@keyframes kpi-red-icon-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--status-red) / 0.5); }
+  50%      { box-shadow: 0 0 0 4px hsl(var(--status-red) / 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kpi-tooltip-icon-red { animation: none; }
+}
+
 /* CCC funnel arrow connectors */
 .ccc-stage-card {
   position: relative;

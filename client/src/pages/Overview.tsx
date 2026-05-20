@@ -702,6 +702,7 @@ export default function Overview() {
                   sub={periodKpis.contractsSub}
                   pace={contractsPace}
                   tooltip={KPI_NOTES.contracts}
+                  metricKey="contracts"
                   size="lg"
                 />
                 <Scorecard
@@ -718,6 +719,7 @@ export default function Overview() {
                   status={profitStatus}
                   tooltip={KPI_NOTES.profit_per_deal}
                   pulse={profitStatus === "red"}
+                  metricKey="contracts"
                   size="lg"
                 />
                 <Scorecard
@@ -725,6 +727,7 @@ export default function Overview() {
                   value={periodKpis.marketingSpend}
                   sub={periodKpis.marketingSpendSub}
                   tooltip={KPI_NOTES.marketing_spend}
+                  metricKey="cost_per_appt"
                   size="lg"
                 />
               </>
@@ -1085,6 +1088,17 @@ function CurrentDealsSection({ data }: { data: any }) {
     <Section
       title="Current Deals Snapshot"
       subtitle={`${cd.summary.totalOpen} open deals • ${fmtMoney(cd.summary.totalProjectedRevenue)} projected (sale > assigned > pushed > purchase)`}
+      actions={
+        <a
+          href="https://docs.google.com/spreadsheets/d/1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0/edit#gid=17564421"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11px] uppercase tracking-[0.12em] font-semibold underline"
+          style={{ color: "hsl(var(--baby-blue-700))" }}
+        >
+          → Open Records (Historic Deal KPIs)
+        </a>
+      }
     >
       <div className="grid grid-cols-12 gap-3 mb-3">
         <Card className="col-span-12 md:col-span-3" padding="p-4">
@@ -1127,7 +1141,18 @@ function CurrentDealsSection({ data }: { data: any }) {
             <tbody className="divide-y divide-border">
               {top.map((d, i) => (
                 <tr key={i} className="hover:bg-muted/30">
-                  <td className="py-2 px-3 font-semibold">{d.address}<div className="text-[11px] text-muted-foreground font-normal">{d.city}</div></td>
+                  <td className="py-2 px-3 font-semibold">
+                    <a
+                      href={`https://docs.google.com/spreadsheets/d/1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0/edit?gid=17564421#gid=17564421&fvid=0&q=${encodeURIComponent(d.address || "")}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hover:underline"
+                      title="Find this row in Historic Deal KPIs"
+                    >
+                      {d.address}
+                    </a>
+                    <div className="text-[11px] text-muted-foreground font-normal">{d.city}</div>
+                  </td>
                   <td className="py-2 px-3"><span className="inline-flex items-center gap-1.5 text-[12px]"><span className={`inline-block w-2 h-2 rounded-full ${phaseColor(d.phaseRank)}`}/>{d.phase}</span></td>
                   <td className="py-2 px-3 text-[12px]">{d.dealType}</td>
                   <td className="py-2 px-3 text-[12px]"><span className="font-medium">{d.aqAgent || "—"}</span>{d.leadManager ? <span className="text-muted-foreground"> · {d.leadManager}</span> : null}</td>

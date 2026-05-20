@@ -402,6 +402,7 @@ export default function Dispositions() {
               sub="Rolling 30 days"
               size="lg"
               status={statusFromTarget(dispoFub.avgAssignmentPerDeal, t.avg_assignment)}
+              metricKey="pushed_to_assigned"
               className="col-span-6 md:col-span-3"
             />
             <Scorecard
@@ -410,6 +411,7 @@ export default function Dispositions() {
               sub="Dropped pipeline"
               size="lg"
               status={dispoFub.totalDropped > 50 ? "yellow" : "green"}
+              metricKey="dropped_contracts"
               className="col-span-6 md:col-span-3"
             />
           </div>

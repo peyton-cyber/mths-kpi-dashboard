@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { StoplightStatus } from "@/lib/data";
 import { ArrowUp, ArrowDown } from "lucide-react";
 import { pacingStatus, type PacePeriod } from "@/lib/pacing";
+import { getRedAction } from "@/lib/redActions";
 
 export function Section({
   title,
@@ -176,6 +177,9 @@ export function Scorecard({
   tooltip,
   pulse,
   pace,
+  metricKey,
+  recordsHref,
+  recordsLabel,
 }: {
   label: string;
   value: string | number;
@@ -195,6 +199,17 @@ export function Scorecard({
    * (monthly contracts, quarterly revenue, etc.) so partial periods don't burn red.
    */
   pace?: PaceProps;
+  /**
+   * Metric identifier for the red-state action library (e.g. "appts_set",
+   * "talk_time"). When the tile is red (status==="red" OR pulse===true),
+   * hovering reveals the recommended action + records link from
+   * `lib/redActions.ts`.
+   */
+  metricKey?: string;
+  /** Override the records link from the registry (deal-specific overrides). */
+  recordsHref?: string;
+  /** Override the records button label. */
+  recordsLabel?: string;
 }) {
   const valueClass = {
     sm: "text-xl",
@@ -202,8 +217,14 @@ export function Scorecard({
     lg: "text-3xl",
     xl: "text-5xl",
   }[size];
+  // When a tile is red (either by explicit status OR persistent-red pulse),
+  // try to attach a recommended-action tooltip from the registry.
+  const isRed = pulse || status === "red";
+  const redAction = isRed ? getRedAction(metricKey) : null;
+  const finalRecordsHref = recordsHref ?? redAction?.recordsHref;
+  const finalRecordsLabel = recordsLabel ?? redAction?.recordsLabel;
   return (
-    <Card className={cn(className, pulse && "kpi-alert-pulse")} padding="p-0">
+    <Card className={cn(className, pulse && "kpi-alert-pulse", isRed && "relative")} padding="p-0">
       <div className="bb-card-header-sm">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 flex items-center gap-1.5">
@@ -216,6 +237,36 @@ export function Scorecard({
                 <span role="tooltip" className="kpi-tooltip-bubble">
                   <strong>{label}</strong>
                   {tooltip}
+                </span>
+              </span>
+            )}
+            {redAction && (
+              <span
+                className="kpi-tooltip kpi-tooltip-red"
+                tabIndex={0}
+                aria-label="Recommended action for this red KPI"
+              >
+                <span
+                  className="kpi-tooltip-icon kpi-tooltip-icon-red"
+                  aria-hidden
+                >!</span>
+                <span role="tooltip" className="kpi-tooltip-bubble kpi-tooltip-bubble-red">
+                  <strong className="block mb-1 uppercase tracking-wider text-[10px]" style={{ color: "hsl(var(--status-red))" }}>
+                    {redAction.title}
+                  </strong>
+                  <span className="block mb-2">{redAction.action}</span>
+                  {finalRecordsHref && (
+                    <a
+                      href={finalRecordsHref}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-semibold underline"
+                      style={{ color: "hsl(var(--baby-blue-700))" }}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      → {finalRecordsLabel ?? "Open records"}
+                    </a>
+                  )}
                 </span>
               </span>
             )}

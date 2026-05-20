@@ -319,6 +319,7 @@ export default function Acquisitions() {
             value={pipe.grossLeads}
             sub={`Target ${grossLeadsGoal} · ${dispLabel}`}
             pace={{ numericValue: pipe.grossLeads, target: grossLeadsPaceTgt, period: effectivePeriod as any }}
+            metricKey="gross_leads"
             size="lg"
           />
           <Scorecard
@@ -326,6 +327,7 @@ export default function Acquisitions() {
             value={pipe.netLeads}
             sub={`Target ${netLeadsGoal} · ${dispLabel}`}
             pace={{ numericValue: pipe.netLeads, target: netLeadsPaceTgt, period: effectivePeriod as any }}
+            metricKey="net_leads"
             size="lg"
           />
           <Scorecard
@@ -333,6 +335,7 @@ export default function Acquisitions() {
             value={pipe.apptsSet}
             sub={`Target ${apptsSetGoal} · ${dispLabel}`}
             pace={{ numericValue: pipe.apptsSet, target: apptsSetPaceTgt, period: effectivePeriod as any }}
+            metricKey="appts_set"
             size="lg"
           />
           <Scorecard
@@ -340,6 +343,7 @@ export default function Acquisitions() {
             value={pipe.apptsExecuted}
             sub={`Target ${apptsExecGoal} · ${dispLabel}`}
             pace={{ numericValue: pipe.apptsExecuted, target: apptsExecPaceTgt, period: effectivePeriod as any }}
+            metricKey="appts_executed"
             size="lg"
           />
         </div>
