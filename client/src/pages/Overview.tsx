@@ -719,7 +719,7 @@ export default function Overview() {
                   status={profitStatus}
                   tooltip={KPI_NOTES.profit_per_deal}
                   pulse={profitStatus === "red"}
-                  metricKey="contracts"
+                  metricKey="profit_per_deal"
                   size="lg"
                 />
                 <Scorecard

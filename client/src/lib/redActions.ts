@@ -119,7 +119,15 @@ export const RED_ACTIONS: Record<string, RedAction> = {
     recordsLabel: "Open FUB today's leads",
   },
 
+  profit_per_deal: {
+    title: "Avg Profit per Deal below target",
+    action: "Margin compression — pull the last 10 closed deals and check sale prices vs assigned prices. Either we're bidding too high or under-pricing on the buyer side.",
+    recordsHref: sheet(GID.historicDeals),
+    recordsLabel: "Open Historic Deal KPIs",
+  },
+
   // === Pipeline / deal health ===
+
   uc_to_pushed: {
     title: "UC → Pushed cycle too long",
     action: "Walk the open UC list. Anything >7 days under contract without disposition action gets a same-day status from Jeff H.",

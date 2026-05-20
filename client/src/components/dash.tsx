@@ -217,9 +217,12 @@ export function Scorecard({
     lg: "text-3xl",
     xl: "text-5xl",
   }[size];
-  // When a tile is red (either by explicit status OR persistent-red pulse),
-  // try to attach a recommended-action tooltip from the registry.
-  const isRed = pulse || status === "red";
+  // When a tile is red (either by explicit status, persistent-red pulse, OR
+  // pace-derived red), try to attach a recommended-action tooltip.
+  const paceRedStatus = pace
+    ? pacingStatus({ value: pace.numericValue, target: pace.target, period: pace.period }).status
+    : null;
+  const isRed = pulse || status === "red" || paceRedStatus === "red";
   const redAction = isRed ? getRedAction(metricKey) : null;
   const finalRecordsHref = recordsHref ?? redAction?.recordsHref;
   const finalRecordsLabel = recordsLabel ?? redAction?.recordsLabel;
