@@ -18,6 +18,7 @@ import { fetchBouncieData, type BouncieData } from "./bouncie";
 import { fetchLeadSourceData, type FubLeadSourceData } from "./fub-lead-sources";
 import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
 import { fetchWeeklyMarketingData, type WeeklyMarketingData } from "./weeklyMarketing";
+import { buildKpiMonthCalendar, getCurrentKpiMonthIdx, type KpiMonth } from "./kpi-month";
 
 // Sheet IDs
 const MASTER_KPIS = "1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0";
@@ -429,6 +430,16 @@ export async function fetchAllKpiData() {
   });
   console.log(`[sheets] resolved SALES_MONTH_COLS: ${JSON.stringify(SALES_MONTH_COLS)}`);
 
+  // Build Mon-Sun KPI month calendar from the resolved headers.
+  // KPI months span Mon→Sun, e.g. "JAN (Dec 29-Feb1)" means Dec 29 → Feb 1.
+  // Use this instead of `_now.getMonth()` for any "what month is it for KPI purposes" lookup.
+  const KPI_YEAR = _now.getFullYear();
+  const KPI_CALENDAR: KpiMonth[] = buildKpiMonthCalendar(SALES_MONTH_COLS, KPI_YEAR);
+  const CURRENT_KPI_MONTH_IDX = getCurrentKpiMonthIdx(_now, KPI_CALENDAR);
+  const CURRENT_KPI_MONTH_SHORT = MONTH_SHORT[CURRENT_KPI_MONTH_IDX];
+  console.log(`[sheets] KPI calendar: ${KPI_CALENDAR.map(m => `${m.key}=${m.start.toISOString().slice(5,10)}→${m.end.toISOString().slice(5,10)}`).join(" | ")}`);
+  console.log(`[sheets] Today=${_now.toISOString().slice(0,10)} → KPI month: ${CURRENT_KPI_MONTH_SHORT} (idx ${CURRENT_KPI_MONTH_IDX})`);
+
   const metricLookup: Record<string, SheetRow> = {};
   for (const row of salesKpis.rows) {
     // Try primary header, fall back to first available key
@@ -697,7 +708,8 @@ export async function fetchAllKpiData() {
       goals.profit_per_deal = activeSprint.profitPerDeal;
     }
     // Use the current month's per-month revenue goal as the headline `goals.revenue`
-    const currentMonthShort = ALL_MONTHS[_now.getMonth()];
+    // KPI months are Mon→Sun (e.g. "JAN (Dec 29-Feb1)") — use the KPI calendar idx
+    const currentMonthShort = ALL_MONTHS[CURRENT_KPI_MONTH_IDX];
     if (monthlyRevenueGoals[currentMonthShort]) {
       goals.revenue = monthlyRevenueGoals[currentMonthShort];
     }
@@ -1071,7 +1083,8 @@ export async function fetchAllKpiData() {
   const pipelineByMonth: Record<string, { count: number; value: number }> = {};
   let pipelineCurrentMonthRemaining = { count: 0, value: 0 };
   let pipelineFutureMonths = { count: 0, value: 0 };
-  const currentMonthKey = MONTH_SHORT[TODAY.getMonth()];
+  // KPI months are Mon→Sun — use the calendar-derived current KPI month, not getMonth()
+  const currentMonthKey = MONTH_SHORT[CURRENT_KPI_MONTH_IDX];
   for (const [mk, deals] of Object.entries(dealsByMonth)) {
     const mIdx = MONTH_SHORT.indexOf(mk);
     for (const d of deals) {
@@ -1152,7 +1165,8 @@ export async function fetchAllKpiData() {
   // Per-rep conversion funnel (same window): each rep gets their own column
   // of calls → appts set → attended → offers → contracts. Closings come from
   // Rev Tracker per-agent deal counts (this calendar month).
-  const currentMonthShort = new Date().toLocaleDateString("en-US", { month: "short" });
+  // KPI months are Mon→Sun — use the calendar-derived current KPI month
+  const currentMonthShort = MONTH_SHORT[CURRENT_KPI_MONTH_IDX];
   const SHEET_TO_CANONICAL_FUNNEL: Record<string, string> = {
     "Korbin": "Korbin", "Brandon": "Brandon", "Jeff Henry": "Jeff H",
     "TJ": "TJ", "Ryan Craig": "Ryan", "Jonathan Medlin": "Jonathan",
@@ -1361,7 +1375,10 @@ export async function fetchAllKpiData() {
   //   - activeMonths never extends past the current calendar month, so we don't
   //     paint June/July/Aug tiles when those months haven't happened yet.
   // ================================================================
-  const _currentMonthIdx0 = _now.getMonth(); // 0..11
+  // Phase 8 uses Rev Tracker which is calendar-month (the tracker is laid out by
+  // calendar month, not Mon-Sun). Keep getMonth() here so per-tile rev caps match
+  // the Rev Tracker tabs the team edits each month.
+  const _currentMonthIdx0 = _now.getMonth(); // 0..11 (calendar month for Rev Tracker alignment)
   // Ensure salesMonthly has assigned and total companion fields for the tiles
   (salesMonthly as any).revenue_assigned = (salesMonthly as any).revenue_assigned || {};
   (salesMonthly as any).revenue_total = (salesMonthly as any).revenue_total || {};
@@ -2802,7 +2819,9 @@ export async function fetchAllKpiData() {
   // Monthly aggregates currently come from current-year sheets only, so we tag
   // the year onto the `when` label for clarity (e.g. "Feb 2026").
   const MONTHS_ORDER = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const currentMonthIdx = _now.getMonth(); // 0..11
+  // Records are about FULLY-COMPLETED months. Use KPI month idx so partial KPI months
+  // (which may extend into the next calendar month) don't qualify prematurely.
+  const currentMonthIdx = CURRENT_KPI_MONTH_IDX; // 0..11 (KPI Mon→Sun)
   const currentYear = _now.getFullYear();
   function bestMonth(
     data: Record<string, number>,
@@ -3049,6 +3068,11 @@ export async function fetchAllKpiData() {
     avgTouchPoints: number;
     avgApptsSet: number;
     target?: { talkTime: number; touchPoints: number; apptsSet: number; };
+    // Tenure context — lets the UI pro-rate YTD for mid-year starters
+    startDate?: string;            // ISO date (rep's first day in FUB)
+    daysSinceStart?: number;       // whole days from startDate to now
+    monthsSinceStart?: number;     // float months (for per-month-since-start averages)
+    contractsPerMonthSinceStart?: number; // contractsYtd / monthsSinceStart (clipped at 1mo min)
   };
   const byAgent: Record<string, AcqAgent> = {};
   // Last 90 days window
@@ -3142,6 +3166,8 @@ export async function fetchAllKpiData() {
     const sheetRep = acqRepsBySheet.get(fubRep.agent);
     const days = Math.max(sheetRep?.days || 0, acqFub.windowDays);
     const bouncieRep = bouncieByRep[fubRep.agent];
+    const ytdContracts = ytdDealsByRep[fubRep.agent] || 0;
+    const monthsSince = Math.max(1, fubRep.monthsSinceStart || 0);
     const merged: AcqAgent = {
       agent: fubRep.agent,
       days,
@@ -3154,12 +3180,18 @@ export async function fetchAllKpiData() {
       offers: fubRep.offersMade,
       contracts: fubRep.contracts,
       // YTD from Rev Tracker (authoritative cross-check, includes Novations/Flips/Listings)
-      contractsYtd: ytdDealsByRep[fubRep.agent] || 0,
+      contractsYtd: ytdContracts,
       contractsByMonth: monthlyDealsByRep[fubRep.agent] || {},
       avgTalkTime: days > 0 ? Math.round(fubRep.talkTimeMin / days) : 0,
       avgTouchPoints: days > 0 ? Math.round(fubRep.callCount / days) : 0,
       avgApptsSet: days > 0 ? Math.round((fubRep.apptsSet / days) * 10) / 10 : 0,
       target: acqTargetByAgent[fubRep.agent] || acqTargetByAgent[sheetRep?.agent || ""],
+      // Tenure context (Jonathan/Ryan/TJ are mid-year starters — don't compare
+      // their YTD to Brandon/Korbin without context)
+      startDate: fubRep.startDate,
+      daysSinceStart: fubRep.daysSinceStart,
+      monthsSinceStart: fubRep.monthsSinceStart,
+      contractsPerMonthSinceStart: Math.round((ytdContracts / monthsSince) * 10) / 10,
     } as AcqAgent & { contractsYtd: number; contractsByMonth: Record<string, number> };
     mergedAgents.push(merged);
   }

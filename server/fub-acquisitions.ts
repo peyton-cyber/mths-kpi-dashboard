@@ -14,15 +14,22 @@
 
 const FUB_BASE = "https://api.followupboss.com/v1";
 
-// FUB userIds for the 6 reporting reps (verified May 2026 via /users)
-export const AQ_REPS: { fubUserId: number; canonical: string }[] = [
-  { fubUserId: 33, canonical: "Korbin" },
-  { fubUserId: 18, canonical: "Brandon" },
-  { fubUserId: 39, canonical: "Jeff H" },
-  { fubUserId: 50, canonical: "TJ" },
-  { fubUserId: 51, canonical: "Ryan" },
-  { fubUserId: 52, canonical: "Jonathan" },
+// FUB userIds for the 6 reporting reps (verified May 2026 via /users).
+// startDate is the FUB user's `created` timestamp — used to pro-rate YTD
+// metrics so Jonathan/Ryan/TJ (who started mid-year) aren't compared
+// against full-year peers without context.
+export const AQ_REPS: { fubUserId: number; canonical: string; startDate: string }[] = [
+  { fubUserId: 18, canonical: "Brandon",  startDate: "2023-08-28" },
+  { fubUserId: 33, canonical: "Korbin",   startDate: "2024-05-22" },
+  { fubUserId: 39, canonical: "Jeff H",   startDate: "2025-02-05" },
+  { fubUserId: 50, canonical: "TJ",       startDate: "2025-12-05" },
+  { fubUserId: 51, canonical: "Ryan",     startDate: "2026-01-24" },
+  { fubUserId: 52, canonical: "Jonathan", startDate: "2026-02-16" },
 ];
+
+export const REP_START_BY_CANONICAL: Record<string, string> = Object.fromEntries(
+  AQ_REPS.map(r => [r.canonical, r.startDate])
+);
 
 const REP_BY_ID = new Map(AQ_REPS.map(r => [r.fubUserId, r.canonical]));
 const REP_BY_NAME_KEY = new Map<string, string>();
@@ -52,6 +59,9 @@ function canonicalFromName(name: string | undefined | null): string | null {
 
 export type AcqRepStats = {
   agent: string;             // canonical name
+  startDate: string;         // ISO date the rep was created in FUB (their "start")
+  daysSinceStart: number;    // whole days from startDate to now
+  monthsSinceStart: number;  // float months (daysSinceStart / 30.44) — for pro-rating YTD
   apptsSet: number;          // appointments where rep is an invitee, start within window
   apptsExecuted: number;     // appts in window where end < now (assumed attended unless cancelled outcome)
   apptsCancelled: number;
@@ -236,13 +246,20 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
   const fetchedAt = new Date().toISOString();
   const empty: AcqFubData = {
     windowDays,
-    reps: AQ_REPS.map(r => ({
-      agent: r.canonical,
-      apptsSet: 0, apptsExecuted: 0, apptsCancelled: 0,
-      callCount: 0, talkTimeMin: 0,
-      contracts: 0, offersMade: 0,
-      hotLeads: 0, newLeads: 0,
-    })),
+    reps: AQ_REPS.map(r => {
+      const startMs = new Date(r.startDate + "T00:00:00Z").getTime();
+      const daysSinceStart = Math.max(0, Math.floor((Date.now() - startMs) / 86_400_000));
+      return {
+        agent: r.canonical,
+        startDate: r.startDate,
+        daysSinceStart,
+        monthsSinceStart: +(daysSinceStart / 30.44).toFixed(2),
+        apptsSet: 0, apptsExecuted: 0, apptsCancelled: 0,
+        callCount: 0, talkTimeMin: 0,
+        contracts: 0, offersMade: 0,
+        hotLeads: 0, newLeads: 0,
+      };
+    }),
     totals: { apptsSet: 0, apptsExecuted: 0, callCount: 0, talkTimeMin: 0, contracts: 0, offersMade: 0 },
     fetchedAt,
     source: "fub",
@@ -273,9 +290,16 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
 
     // Initialize map keyed by canonical name
     const statsByRep: Record<string, AcqRepStats> = {};
+    const nowMs = now.getTime();
     for (const r of AQ_REPS) {
+      const startMs = new Date(r.startDate + "T00:00:00Z").getTime();
+      const daysSinceStart = Math.max(0, Math.floor((nowMs - startMs) / 86_400_000));
+      const monthsSinceStart = +(daysSinceStart / 30.44).toFixed(2);
       statsByRep[r.canonical] = {
         agent: r.canonical,
+        startDate: r.startDate,
+        daysSinceStart,
+        monthsSinceStart,
         apptsSet: 0, apptsExecuted: 0, apptsCancelled: 0,
         callCount: 0, talkTimeMin: 0,
         contracts: 0, offersMade: 0,
@@ -284,7 +308,6 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
     }
 
     // ----- Appointments: each invitee that's a rep counts as 1 set
-    const nowMs = now.getTime();
     for (const a of appts) {
       const startStr = a.start || a.created;
       const endStr = a.end || startStr;

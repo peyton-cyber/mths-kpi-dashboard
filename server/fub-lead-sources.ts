@@ -109,9 +109,15 @@ export async function fetchLeadSourceData(
     // d.stage === "Under Contract" inside the AQ pipeline, but FUB's `stage`
     // field is always null for this org and the AQ pipeline has no
     // "Under Contract" stage, so the count was always 0.
-    const [uwDeals, dispoDeals] = await Promise.all([
+    //
+    // ALSO pull /appointments in the window so we can attribute appointments
+    // back to the person’s source (FUB's /people endpoint does NOT return
+    // appointmentCount, so the old `p.appointmentCount > 0` test was always
+    // false and every source showed `appts: 0`).
+    const [uwDeals, dispoDeals, apptList] = await Promise.all([
       paginate<any>(apiKey, `/v1/deals?pipelineId=14&sort=-updated`, "deals", controller.signal, 10),
       paginate<any>(apiKey, `/v1/deals?pipelineId=1&sort=-updated`, "deals", controller.signal, 10),
+      paginate<any>(apiKey, `/v1/appointments?sort=-start&earliest=${encodeURIComponent(startISO)}`, "appointments", controller.signal, 15),
     ]);
     const contractDeals = [...uwDeals, ...dispoDeals];
 
@@ -132,8 +138,31 @@ export async function fetchLeadSourceData(
       sourceByPerson.set(p.id, src);
       const b = bucket(src);
       b.leads += 1;
-      if ((p.appointmentCount || 0) > 0) b.appts += 1;
     }
+
+    // Bucket appointments by source via the linked person. Count distinct
+    // persons-with-appointment (so a lead with multiple appts counts once),
+    // matching the original "appointmentCount > 0" semantic.
+    const apptPersonsBySource = new Map<string, Set<number>>();
+    for (const a of apptList) {
+      const startT = a?.start ? new Date(a.start).getTime() : 0;
+      if (!startT || startT < startMs) continue;
+      const invitees = Array.isArray(a.invitees) ? a.invitees : [];
+      for (const inv of invitees) {
+        const pid = inv?.personId ?? inv?.id;
+        if (typeof pid !== "number") continue;
+        // Prefer the source we already recorded; if the person was created
+        // outside the window, fall back to bucketing them as "unknown" so the
+        // count surfaces somewhere instead of being silently dropped.
+        const src = sourceByPerson.get(pid) || "Unknown";
+        if (!apptPersonsBySource.has(src)) apptPersonsBySource.set(src, new Set());
+        apptPersonsBySource.get(src)!.add(pid);
+      }
+    }
+    for (const [src, persons] of apptPersonsBySource.entries()) {
+      bucket(src).appts += persons.size;
+    }
+    console.log(`[lead-sources] appts attached: ${apptList.length} appts in window → ${Array.from(apptPersonsBySource.values()).reduce((s, x) => s + x.size, 0)} persons across ${apptPersonsBySource.size} sources`);
 
     // Count contracts in window — a deal entered Underwriting or Disposition
     // pipeline within the window. Dedupe by deal id in case the same deal

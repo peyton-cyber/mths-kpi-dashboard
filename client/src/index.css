@@ -46,7 +46,8 @@
   --secondary-foreground: 218 50% 12%;
 
   --muted: 214 18% 93%;
-  --muted-foreground: 215 15% 42%;
+  /* Bumped from 42% → 32% for stronger contrast on labels & secondary text */
+  --muted-foreground: 215 22% 32%;
 
   --accent: 207 40% 90%;
   --accent-foreground: 207 63% 40%;
@@ -159,7 +160,8 @@
   --secondary-foreground: 210 20% 96%;
 
   --muted: 215 25% 15%;
-  --muted-foreground: 210 12% 62%;
+  /* Bumped from 62% → 75% for stronger contrast on dark-mode labels */
+  --muted-foreground: 210 16% 75%;
 
   --accent: 215 35% 20%;
   --accent-foreground: 207 70% 70%;
