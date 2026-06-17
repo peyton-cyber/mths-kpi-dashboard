@@ -7,6 +7,7 @@ import {
   StoplightDot,
   ProgressBar,
 } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
 import { useKpi } from "@/components/KpiDataProvider";
 import {
@@ -223,6 +224,7 @@ export default function Marketing() {
       <Section
         title="Channel Scorecard"
         subtitle={channelTableNote ?? (bestROAS ? `Winner: ${bestROAS.name} — ${bestROAS.roas?.toFixed(2)}x ROAS` : "YTD channel performance")}
+        source={SRC.marketing2026}
       >
         {channelTableNote && (
           <div className="mb-3 px-1 text-[12px] text-muted-foreground italic">{channelTableNote}</div>
@@ -481,6 +483,7 @@ function WeeklyMarketingFunnel({ kpiData }: { kpiData: ReturnType<typeof useKpi>
     <Section
       title="Weekly Marketing Funnel"
       subtitle={`Live · ${t.weeksCovered} weeks · ${t.sourcesCovered} sources · ${t.grossLead.toLocaleString()} gross / ${t.netLead.toLocaleString()} net (${fmtPct(t.netToGrossPct / 100, 0)})`}
+      source={SRC.weeklyMarketing}
     >
       {/* Headline scorecards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">

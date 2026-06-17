@@ -8,6 +8,7 @@ import {
   StoplightBadge,
   ProgressBar,
 } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
 import { useKpi } from "@/components/KpiDataProvider";
 import { AlertBanner } from "@/components/AlertBanner";
@@ -312,7 +313,7 @@ export default function Acquisitions() {
       )}
 
       {/* Scorecard targets — all 4 use getPipelineForPeriod + scaled goals */}
-      <Section title={targetSectionTitle}>
+      <Section title={targetSectionTitle} source={[SRC.marketing2026, SRC.sales2026]}>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Scorecard
             label="Gross Leads"
@@ -350,7 +351,7 @@ export default function Acquisitions() {
       </Section>
 
       {/* Funnel chart */}
-      <Section title={funnelTitle} subtitle={funnelSubtitle}>
+      <Section title={funnelTitle} subtitle={funnelSubtitle} source={[SRC.sales2026, SRC.revTracker]}>
         <Card padding="p-5">
           <div className="h-[260px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -390,7 +391,7 @@ export default function Acquisitions() {
       </Section>
 
       {/* Lead Managers */}
-      <Section title={repSectionTitle}>
+      <Section title={repSectionTitle} source={SRC.sales2026}>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           {leadManagerNames.map((name) => {
             const lm = leadManagers[name];
@@ -688,6 +689,7 @@ function AqFunnelSection({ data }: { data: any }) {
     <Section
       title="Marketing → Contract Funnel"
       subtitle="Net leads → set → executed → under contract → closed. Top is Marketing 2026 KPI net leads when available."
+      source={[SRC.marketing2026, SRC.historicDeal, SRC.revTracker]}
     >
       <div className="grid grid-cols-12 gap-3">
         {af.rolling30d ? (
@@ -747,6 +749,7 @@ function DealTypeSegmentationSection({ data }: { data: any }) {
     <Section
       title="Deal Type Segmentation"
       subtitle={`Last ${ds.windowDays} days closed • ${ds.totals.count} deals • ${fmtMoney(ds.totals.profit)} profit`}
+      source={SRC.revTracker}
     >
       <Card padding="p-0">
         <div className="overflow-x-auto">
@@ -787,6 +790,7 @@ function LmAqCombosSection({ data }: { data: any }) {
     <Section
       title="Lead Manager × AQ Combos"
       subtitle={`Top pairs by closed deals (last ${lm.windowDays} days)`}
+      source={SRC.revTracker}
     >
       <div className="grid grid-cols-12 gap-3">
         <Card className="col-span-12 md:col-span-6" padding="p-0">

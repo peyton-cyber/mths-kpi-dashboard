@@ -10,18 +10,21 @@ export function Section({
   title,
   subtitle,
   actions,
+  source,
   children,
   className,
 }: {
   title?: string;
   subtitle?: string;
   actions?: ReactNode;
+  source?: DataSourceProps | DataSourceProps[];
   children: ReactNode;
   className?: string;
 }) {
+  const sources = Array.isArray(source) ? source : source ? [source] : [];
   return (
     <section className={cn("space-y-3", className)}>
-      {(title || subtitle || actions) && (
+      {(title || subtitle || actions || sources.length > 0) && (
         <div className="flex items-end justify-between gap-3 flex-wrap">
           <div className="bb-section-header">
             {title && (
@@ -34,6 +37,13 @@ export function Section({
                 {subtitle}
               </p>
             )}
+            {sources.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {sources.map((s, i) => (
+                  <DataSource key={i} {...s} />
+                ))}
+              </div>
+            )}
           </div>
           {actions}
         </div>
@@ -41,6 +51,52 @@ export function Section({
       {children}
     </section>
   );
+}
+
+// ─── Data-source pill ─────────────────────────────────────────────
+// Tiny labeled chip used inline on Sections (and anywhere else) so the team
+// can instantly see WHERE the numbers came from. Click-to-open when a URL is
+// provided.
+export type DataSourceProps = {
+  label: string;          // e.g. "Sales 2026 KPIs"
+  detail?: string;        // optional tab/range hint e.g. "per-rep monthly"
+  url?: string;           // optional clickable link to the sheet/tab
+  tone?: "sheet" | "api" | "computed" | "warn";
+};
+
+export function DataSource({ label, detail, url, tone = "sheet" }: DataSourceProps) {
+  const toneCls =
+    tone === "api"
+      ? "border-status-blue/30 bg-status-blue/5 text-status-blue"
+      : tone === "computed"
+      ? "border-status-purple/30 bg-status-purple/5 text-status-purple"
+      : tone === "warn"
+      ? "border-status-yellow/40 bg-status-yellow/10 text-status-yellow"
+      : "border-border bg-muted/40 text-muted-foreground";
+  const labelTxt =
+    tone === "api" ? "API" : tone === "computed" ? "Derived" : tone === "warn" ? "Heads up" : "Source";
+  const inner = (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] font-medium tracking-wide",
+        toneCls,
+      )}
+      title={detail ? `${label} — ${detail}` : label}
+      data-testid={`source-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}
+    >
+      <span className="uppercase opacity-60">{labelTxt}</span>
+      <span className="font-semibold">{label}</span>
+      {detail && <span className="opacity-70">· {detail}</span>}
+    </span>
+  );
+  if (url) {
+    return (
+      <a href={url} target="_blank" rel="noreferrer" className="hover:opacity-80">
+        {inner}
+      </a>
+    );
+  }
+  return inner;
 }
 
 export function Card({

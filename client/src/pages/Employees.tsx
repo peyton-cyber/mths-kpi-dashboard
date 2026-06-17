@@ -9,6 +9,7 @@
 import { useMemo } from "react";
 import { Link, useRoute } from "wouter";
 import { Card, PageHeader, Section, StoplightBadge } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { useKpi } from "@/components/KpiDataProvider";
 import { AlertBanner } from "@/components/AlertBanner";
 import { fmtMoney } from "@/lib/useKpiData";
@@ -203,7 +204,7 @@ function EmployeeDetail({ slug }: { slug: string }) {
 
       {/* Activity tile (AQA / Lead Mgr) */}
       {acqAgent && (
-        <Section title="Daily Activity (90-day window)">
+        <Section title="Daily Activity (90-day window)" source={SRC.sales2026}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <StatTile
               label="Avg Talk Time / Day"
@@ -241,7 +242,7 @@ function EmployeeDetail({ slug }: { slug: string }) {
 
       {/* Weekly RISE (LM) */}
       {lmRise && (
-        <Section title="Weekly RISE — Lead Manager">
+        <Section title="Weekly RISE — Lead Manager" source={SRC.sales2026}>
           <Card padding="p-4">
             <RiseTable rise={lmRise} />
           </Card>
@@ -250,7 +251,7 @@ function EmployeeDetail({ slug }: { slug: string }) {
 
       {/* Weekly RISE (AQ) */}
       {aqRise && (
-        <Section title="Weekly RISE — Acquisitions">
+        <Section title="Weekly RISE — Acquisitions" source={SRC.sales2026}>
           <Card padding="p-4">
             <RiseTable rise={aqRise} />
           </Card>
@@ -259,7 +260,7 @@ function EmployeeDetail({ slug }: { slug: string }) {
 
       {/* Spend / ROAS (only if attributed) */}
       {spendRow && spendRow.spend > 0 && (
-        <Section title="Marketing Attribution">
+        <Section title="Marketing Attribution" source={SRC.marketing2026}>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <MiniTile icon={<HandCoins className="h-3.5 w-3.5" />} label="Spend"  value={fmtMoney(spendRow.spend)} />
             <MiniTile label="Profit"     value={fmtMoney(spendRow.profit)} />

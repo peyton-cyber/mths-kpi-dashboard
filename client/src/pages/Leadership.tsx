@@ -7,6 +7,7 @@ import {
   StoplightDot,
   ProgressBar,
 } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
 import { useKpi } from "@/components/KpiDataProvider";
 import {
@@ -176,6 +177,7 @@ export default function Leadership() {
       <Section
         title="Rate the Meeting"
         subtitle={`Weekly 1–5 scores · leadership team · showing all 14 weeks`}
+        source={SRC.derived("hardcoded — leadership weekly survey")}
       >
         <Card padding="p-5">
           <div className="h-[280px]">
@@ -333,7 +335,7 @@ export default function Leadership() {
       </div>
 
       {/* HR Metrics — always use latestMonth / prevMonth (monthly resolution) */}
-      <Section title={hrSectionTitle} subtitle={hrSubtitle}>
+      <Section title={hrSectionTitle} subtitle={hrSubtitle} source={SRC.financials}>
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
           <Scorecard
             label="Trainual Hours"

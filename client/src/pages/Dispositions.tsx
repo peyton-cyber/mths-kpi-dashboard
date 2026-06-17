@@ -9,6 +9,7 @@ import {
   StoplightDot,
   ProgressBar,
 } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
 import { useKpi } from "@/components/KpiDataProvider";
 import {
@@ -378,6 +379,7 @@ export default function Dispositions() {
         <Section
           title="Disposition Pipeline · From Dispo 2026 KPIs"
           subtitle={`Per-rep dispo activity from the Dispo 2026 KPIs sheet + Revenue Tracker assignments. ${dispLabel}`}
+          source={[SRC.dispo2026, SRC.revTracker]}
         >
           {(() => {
             const allReps = dispoWeekly.reps;
@@ -467,6 +469,7 @@ export default function Dispositions() {
         <Section
           title="Buyer Email · Live from Mailchimp"
           subtitle={`${mailchimp.audienceName || "Audience"} · Last sent ${mailchimp.lastSentAt ? new Date(mailchimp.lastSentAt).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"} · Synced ${new Date(mailchimp.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
+          source={SRC.mailchimp}
         >
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-testid="mailchimp-scorecards">
             <Scorecard

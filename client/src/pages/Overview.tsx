@@ -10,6 +10,7 @@ import {
   ProgressBar,
   StoplightDot,
 } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { KpiTooltip, KPI_NOTES, isRedStreak } from "@/components/KpiTooltip";
 import { CashConversionCycleSection } from "@/components/CashConversionCycle";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
@@ -653,7 +654,7 @@ export default function Overview() {
       </div>
 
       {/* KPI summary row */}
-      <Section title={periodSectionTitle}>
+      <Section title={periodSectionTitle} source={[SRC.sales2026, SRC.revTracker]}>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {(() => {
             // Contracts: pace-projected against the period-appropriate target.
@@ -739,7 +740,7 @@ export default function Overview() {
 
       {/* Board Snapshot — Funnel + Deal Economics + Forward Pipeline */}
       {(conversionFunnel || dealEconomics || pipelineForward) && (
-        <Section title="Board Snapshot" subtitle={`${conversionFunnel?.windowLabel ?? `Last ${conversionFunnel?.windowDays ?? 30} days`} conversion + deal economics + forward pipeline`}>
+        <Section title="Board Snapshot" subtitle={`${conversionFunnel?.windowLabel ?? `Last ${conversionFunnel?.windowDays ?? 30} days`} conversion + deal economics + forward pipeline`} source={[SRC.sales2026, SRC.historicDeal, SRC.revTracker]}>
           <div className="grid grid-cols-12 gap-3">
             {/* Conversion Funnel */}
             {conversionFunnel && (
@@ -851,7 +852,7 @@ export default function Overview() {
       <CurrentDealsSection data={data as any} />
 
       {/* Pipeline trend */}
-      <Section title="Pipeline Trend" subtitle={pipelineSubtitle}>
+      <Section title="Pipeline Trend" subtitle={pipelineSubtitle} source={[SRC.marketing2026, SRC.sales2026]}>
         <Card padding="p-5">
           <div className="h-[240px]">
             <ResponsiveContainer width="100%" height="100%">
@@ -1034,6 +1035,7 @@ export default function Overview() {
         <Section
           title="Company Records"
           subtitle="All-time bests across the team"
+          source={SRC.revTracker}
         >
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
             {companyRecords.map((rec) => (
@@ -1089,6 +1091,7 @@ function CurrentDealsSection({ data }: { data: any }) {
     <Section
       title="Current Deals Snapshot"
       subtitle={`${cd.summary.totalOpen} open deals • ${fmtMoney(cd.summary.totalProjectedRevenue)} projected (sale > assigned > pushed > purchase)`}
+      source={SRC.historicDeal}
       actions={
         <a
           href="https://docs.google.com/spreadsheets/d/1rKN0793qdZrst2qZFCo9NcOzy9ZIUyLQdnGoO0jNFx0/edit#gid=17564421"

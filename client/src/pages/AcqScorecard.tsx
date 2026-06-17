@@ -5,6 +5,7 @@
  */
 import { useState } from "react";
 import { Card, PageHeader, Section } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { useKpi } from "@/components/KpiDataProvider";
 import { AlertBanner } from "@/components/AlertBanner";
 import {
@@ -176,7 +177,7 @@ export default function AcqScorecard() {
       {hasData && (
         <>
           {/* MATRIX: KPIs as rows, agents as columns */}
-          <Section title="Per-Agent Scorecard" subtitle="KPIs (rows) × Agents (columns)">
+          <Section title="Per-Agent Scorecard" subtitle="KPIs (rows) × Agents (columns)" source={[SRC.sales2026, SRC.revTracker]}>
             <Card padding="p-0">
               <div className="overflow-x-auto">
                 <table className="w-full text-[12.5px]">
@@ -225,6 +226,7 @@ export default function AcqScorecard() {
             <Section
               title="Drive Time"
               subtitle={`Bouncie · last 30 days · ${bouncie?.isReal ? "live" : "MOCK DATA (until token arrives)"}`}
+              source={SRC.bouncie}
             >
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {bouncieRows.map(b => (
@@ -264,6 +266,7 @@ export default function AcqScorecard() {
           <Section
             title="Per-Agent Activity Funnel"
             subtitle="Touch points → appts set → attended → offers → contracts (period totals)"
+            source={SRC.sales2026}
             actions={
               <div className="flex items-center gap-1 flex-wrap">
                 <button
@@ -312,6 +315,7 @@ export default function AcqScorecard() {
             <Section
               title="Revenue Tracker — Per-Agent Gross"
               subtitle="Sum of deal gross revenue when agent earned a commission (YTD)"
+              source={SRC.revTracker}
             >
               <Card>
                 <div className="h-[280px]">
@@ -339,6 +343,7 @@ export default function AcqScorecard() {
             <Section
               title="Revenue Tracker — Gross by Marketing Source"
               subtitle="Top sources from Rev Tracker (deals attributed via Marketing Month + Source column)"
+              source={SRC.revTracker}
             >
               <Card>
                 <div className="h-[280px]">

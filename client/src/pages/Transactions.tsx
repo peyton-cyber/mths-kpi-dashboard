@@ -9,6 +9,7 @@ import {
   ProgressBar,
   StoplightDot,
 } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { TimePeriodFilter, type TimePeriod } from "@/components/TimePeriodFilter";
 import { useKpi } from "@/components/KpiDataProvider";
 import {
@@ -253,7 +254,7 @@ export default function Transactions() {
       )}
 
       {/* ═══ TC Capacity — always current snapshot ═══ */}
-      <Section title="TC Capacity" subtitle="Live snapshot · workload points vs. individual capacity">
+      <Section title="TC Capacity" subtitle="Live snapshot · workload points vs. individual capacity" source={SRC.tcTracker}>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
           {/* Kalyn */}
           <Card padding="p-5" className="border-status-red/30">
@@ -340,7 +341,7 @@ export default function Transactions() {
       </Section>
 
       {/* ═══ Pipeline Snapshot — Key operational health metrics ═══ */}
-      <Section title="Pipeline Snapshot" subtitle="Active deals · live operational health metrics">
+      <Section title="Pipeline Snapshot" subtitle="Active deals · live operational health metrics" source={SRC.tcTracker}>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
           <Scorecard
             label="Total Deals"
@@ -387,7 +388,7 @@ export default function Transactions() {
       </Section>
 
       {/* ═══ Rise Metrics — snapshot ═══ */}
-      <Section title={riseSectionTitle}>
+      <Section title={riseSectionTitle} source={SRC.sales2026}>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <Scorecard
             label="Active Files"
@@ -728,7 +729,7 @@ export default function Transactions() {
       </div>
 
       {/* ═══ Active Deal Files Table ═══ */}
-      <Section title="Active Deal Files" subtitle={`${tx.dealFiles.length} active files · sorted by days in pipeline`}>
+      <Section title="Active Deal Files" subtitle={`${tx.dealFiles.length} active files · sorted by days in pipeline`} source={SRC.tcTracker}>
         <Card padding="p-0" className="overflow-hidden">
           {/* Toggle */}
           <div className="px-5 py-3 border-b flex items-center justify-between">
