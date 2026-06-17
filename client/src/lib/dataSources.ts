@@ -15,7 +15,7 @@ export const SRC = {
   // ── Master KPIs tabs (canonical) ──
   marketing2026: {
     label: "Marketing 2026 KPIs",
-    detail: "channels",
+    detail: "current-month channels",
     url: tab(MASTER_KPIS),
     tone: "sheet" as const,
   },

@@ -582,6 +582,7 @@ export default function Dispositions() {
       <Section
         title={`Leaderboard · ${josephRep?.name ?? "Joseph"} vs ${jebRep?.name ?? "Jeb"}`}
         subtitle={`${periodLabel(period)} · Higher is better`}
+        source={SRC.revTracker}
       >
         <Card padding="p-5">
           <div className="space-y-3">

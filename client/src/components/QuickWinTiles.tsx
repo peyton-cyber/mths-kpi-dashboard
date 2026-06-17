@@ -7,6 +7,7 @@
  * All read from KpiData; gracefully render empty states if data is missing.
  */
 import { Card, Section } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { useKpi } from "@/components/KpiDataProvider";
 import { fmtMoney } from "@/lib/useKpiData";
 
@@ -24,6 +25,7 @@ export function PerRepFunnelTile() {
     <Section
       title={`Per-Rep Funnel — ${funnel.windowLabel}`}
       subtitle={`Net Leads → Appts Set → Executed → Contracts → Closings (${funnel.closingsMonth}) — sheet-only (Master KPIs)`}
+      source={[SRC.sales2026, SRC.revTracker]}
     >
       <Card>
         <div className="overflow-x-auto">
@@ -73,7 +75,7 @@ export function DaysToCloseTile() {
   // Sheet-based avg days to close is shown in the Overview "Deal Economics" card.
   if (!dtc || dtc.sampleSize === 0) return null;
   return (
-    <Section title="Days to Close" subtitle="Avg cycle time from contract to close">
+    <Section title="Days to Close" subtitle="Avg cycle time from contract to close" source={SRC.historicDeal}>
       <Card>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Stat label="Avg Days" value={dtc.avgDays != null ? `${dtc.avgDays}d` : "—"} highlight />
@@ -104,7 +106,7 @@ export function LeadSourceRoiTile() {
   const ls = data.leadSources;
   if (!ls || !ls.sources || ls.sources.length === 0) {
     return (
-      <Section title="Lead-Source ROI" subtitle="Cost-per-lead and CAC by channel (Marketing 2026 KPIs)">
+      <Section title="Lead-Source ROI" subtitle="Cost-per-lead and CAC by channel (Marketing 2026 KPIs)" source={SRC.marketing2026}>
         <Card>
           <div className="text-xs text-muted-foreground py-4 text-center">
             {ls?.error ?? "Lead-source data not available yet."}
@@ -121,6 +123,7 @@ export function LeadSourceRoiTile() {
     <Section
       title="Lead-Source ROI"
       subtitle={`${ls.windowLabel || `Last ${ls.windowDays}d`} · ${ls.totalLeads} leads · ${ls.totalContracts} contracts · ${fmtMoney(ls.totalSpend)} spend · source: Marketing 2026 KPIs`}
+      source={SRC.marketing2026}
     >
       <Card>
         <div className="overflow-x-auto">
@@ -239,6 +242,7 @@ export function YoYTile() {
     <Section
       title="2026 vs 2025 — Year-Over-Year"
       subtitle={`YTD comparison across ${comparison.monthsCompared.length || 0} months with 2026 actuals`}
+      source={[SRC.sales2026, SRC.revTracker]}
     >
       <Card>
         {/* Headline metrics */}

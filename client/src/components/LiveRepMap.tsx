@@ -8,6 +8,7 @@
  */
 import { useEffect, useMemo } from "react";
 import { Card, Section } from "./dash";
+import { SRC } from "@/lib/dataSources";
 import { useKpi } from "./KpiDataProvider";
 import { MapContainer, TileLayer, Marker, Popup, useMap } from "react-leaflet";
 import L, { LatLngBounds } from "leaflet";
@@ -89,6 +90,7 @@ export function LiveRepMap() {
       subtitle={hasReal
         ? `Bouncie GPS · ${locations.length} ${locations.length === 1 ? "vehicle" : "vehicles"} reporting · refreshed ${meta?.fetchedAt ? timeAgo(meta.fetchedAt) : "—"}`
         : "Waiting for Bouncie devices to be paired"}
+      source={SRC.bouncie}
     >
       <Card>
         <div

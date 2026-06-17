@@ -15,6 +15,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Card, Section, StoplightDot } from "./dash";
+import { SRC } from "@/lib/dataSources";
 import { Truck, MapPin, Clock, Radio } from "lucide-react";
 
 // ---- Types matching the future backend contract ----
@@ -164,6 +165,7 @@ export function LiveFieldActivity({
     <Section
       title="Live Field Activity"
       subtitle="AQ agent + vehicle positions across Middle Tennessee. Refreshes automatically."
+      source={SRC.bouncie}
       actions={
         <div className="flex items-center gap-2 text-[11px]">
           <Radio className={`h-3 w-3 ${isMock ? "text-status-yellow" : "text-status-green animate-pulse"}`} />

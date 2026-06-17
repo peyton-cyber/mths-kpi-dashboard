@@ -4,6 +4,7 @@
 // "Historic Deal KPIs" tab).
 import { useMemo, useState } from "react";
 import { Card, Section, StoplightDot } from "@/components/dash";
+import { SRC } from "@/lib/dataSources";
 import { KpiTooltip, KPI_NOTES } from "@/components/KpiTooltip";
 import { fmtMoney } from "@/lib/useKpiData";
 import type { CashConversionCycle, CCCDeal } from "@/lib/useKpiData";
@@ -106,6 +107,7 @@ export function CashConversionCycleSection({
     <Section
       title="Cash Conversion Cycle"
       subtitle={`Lead created → closed. Stage-level breakdown across the ${ccc.totalSampleSize} deals closed in the last 12 months.`}
+      source={[SRC.historicDeal, SRC.revTracker]}
     >
       {/* Total card + funnel */}
       <Card padding="p-5">

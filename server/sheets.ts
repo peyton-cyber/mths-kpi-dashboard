@@ -1822,12 +1822,32 @@ export async function fetchAllKpiData() {
     roas: resolveHeader(["ROAS", "Return"]) || "ROAS",
   };
   console.log(`[sheets] Marketing 2026 column resolution: ${JSON.stringify(COL)}`);
+  // ================================================================
+  // CURRENT-MONTH scoping (fixes YTD-vs-June discrepancy).
+  // ----------------------------------------------------------------
+  // Marketing 2026 KPIs sheet has THREE distinct blocks:
+  //   1. YTD channel totals (rows 2-11, ID = 1..10)                 ← was being used
+  //   2. Monthly summary table (rows 13-24, ID = A..L, one per mo)  ← totals come from here now
+  //   3. Per-month detail blocks (ID = A1..A10, B1..B10, … F1..F10) ← channels come from here now
+  // User-facing dashboard expects current-month numbers, not YTD.
+  // ================================================================
+  const _today = new Date();
+  const _monthIdx = _today.getMonth(); // 0=Jan … 5=Jun … 11=Dec
+  const currentMonthLetter = String.fromCharCode(65 + _monthIdx); // "A".."L"
+  const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const currentMonthName = monthNames[_monthIdx];
+  const channelIdRe = new RegExp(`^${currentMonthLetter}(?:[1-9]|10)$`);
+
+  // 3. Per-channel rows: ID like F1..F10 for June. Lead Funnels = vendor name.
+  //    Column positions match row-1 headers exactly (Cost, Gross Leads, Net Leads,
+  //    Deals, Conversion Rate %, etc.), so header-keyed lookups still work.
   const channelRows = mktg.rows.filter((r) => {
+    const id = String(r[COL.id] || "").trim();
+    if (!channelIdRe.test(id)) return false;
     const lf = String(r[COL.leadFunnel] || "").trim();
     if (!lf) return false;
-    // Skip any TOTALS-style row (e.g. "TOTALS - Marketing")
     if (lf.toUpperCase().startsWith("TOTAL")) return false;
-    return r[COL.id] && parseInt2(r[COL.id]) > 0 && parseInt2(r[COL.id]) <= 10;
+    return true;
   });
   const marketingChannels = channelRows.map((r) => ({
     name: r[COL.leadFunnel],
@@ -1840,43 +1860,47 @@ export async function fetchAllKpiData() {
     revenue: parseMoney(r[COL.revenue]),
     roas: r[COL.roas] ? parseFloat(String(r[COL.roas]).replace("%", "").replace(/,/g, "")) / 100 : null,
   }));
-  // Marketing TOTALS row — match anything starting with "TOTAL" (e.g. "TOTALS - Marketing ")
-  const totalsRow = mktg.rows.find((r) => {
-    const lf = String(r[COL.leadFunnel] || "").trim().toUpperCase();
-    return lf.startsWith("TOTAL");
+
+  // 2. Monthly summary row — ID = letter, Lead Funnels = month name.
+  //    e.g. for June: ID="F", Lead Funnels="June", Gross Leads=174, Cost=$72,619, …
+  const monthlyTotalsRow = mktg.rows.find((r) => {
+    const id = String(r[COL.id] || "").trim();
+    const lf = String(r[COL.leadFunnel] || "").trim();
+    return id === currentMonthLetter && lf.toLowerCase() === currentMonthName.toLowerCase();
   });
-  // Sum from per-channel rows. Always preferred when non-zero — the TOTALS row
-  // sometimes carries blank/zero derived fields even when individual channel
-  // rows have valid data.
+
+  // Sum from per-channel rows (sanity / fallback).
   const sumSpend = marketingChannels.reduce((s, c) => s + (c.spend || 0), 0);
   const sumGross = marketingChannels.reduce((s, c) => s + (c.gross_leads || 0), 0);
   const sumNet   = marketingChannels.reduce((s, c) => s + (c.net_leads   || 0), 0);
   const sumDeals = marketingChannels.reduce((s, c) => s + (c.deals      || 0), 0);
   const sumRev   = marketingChannels.reduce((s, c) => s + (c.revenue    || 0), 0);
 
+  // Totals: prefer the sheet's authoritative monthly summary row when present.
+  // Fall back to per-channel sums if the summary row is missing.
+  const totalsFromSheet = (col: string, parser: (v: any) => number): number =>
+    monthlyTotalsRow ? parser(monthlyTotalsRow[col]) : 0;
   const marketingTotals = {
-    spend:        sumSpend > 0 ? sumSpend : (totalsRow ? parseMoney(totalsRow[COL.cost])         : 0),
-    gross_leads:  sumGross > 0 ? sumGross : (totalsRow ? parseInt2(totalsRow[COL.grossLeads])    : 0),
-    net_leads:    sumNet   > 0 ? sumNet   : (totalsRow ? parseInt2(totalsRow[COL.netLeads])      : 0),
-    deals:        sumDeals > 0 ? sumDeals : (totalsRow ? parseInt2(totalsRow[COL.deals])         : 0),
-    revenue:      sumRev   > 0 ? sumRev   : (totalsRow ? parseMoney(totalsRow[COL.revenue])      : 0),
+    spend:        totalsFromSheet(COL.cost,       parseMoney)  || sumSpend,
+    gross_leads:  totalsFromSheet(COL.grossLeads, parseInt2)   || sumGross,
+    net_leads:    totalsFromSheet(COL.netLeads,   parseInt2)   || sumNet,
+    deals:        totalsFromSheet(COL.deals,      parseInt2)   || sumDeals,
+    revenue:      totalsFromSheet(COL.revenue,    parseMoney)  || sumRev,
     conversion: 0 as number,    // computed below
     cost_per_deal: 0 as number, // computed below
     roas: 0 as number,          // computed below
   };
-  // Derive blended conversion / cost-per-deal / ROAS from the totals we just
-  // built. Recomputing avoids the bug where the TOTALS row in the sheet had
-  // empty Conversion% and Cost/Deal cells, which previously made the dashboard
-  // show 0.0% and $0 even though there were 67 deals on $409K spend.
+  // Derive blended conversion / cost-per-deal / ROAS from the totals.
   marketingTotals.conversion = marketingTotals.net_leads > 0
     ? marketingTotals.deals / marketingTotals.net_leads
-    : (totalsRow ? (parsePct(totalsRow[COL.conversion]) ?? 0) : 0);
+    : (monthlyTotalsRow ? (parsePct(monthlyTotalsRow[COL.conversion]) ?? 0) : 0);
   marketingTotals.cost_per_deal = marketingTotals.deals > 0
     ? marketingTotals.spend / marketingTotals.deals
-    : (totalsRow ? parseMoney(totalsRow[COL.costPerDeal]) : 0);
+    : (monthlyTotalsRow ? parseMoney(monthlyTotalsRow[COL.costPerDeal]) : 0);
   marketingTotals.roas = marketingTotals.spend > 0
     ? Math.round((marketingTotals.revenue / marketingTotals.spend) * 100) / 100
     : 0;
+  console.log(`[sheets] Marketing scoped to ${currentMonthName} (letter ${currentMonthLetter}): ${marketingChannels.length} channels, gross=${marketingTotals.gross_leads}, net=${marketingTotals.net_leads}, deals=${marketingTotals.deals}, spend=$${marketingTotals.spend.toLocaleString()}`);
   console.log(
     `[sheets] marketingTotals: spend=$${marketingTotals.spend.toLocaleString()} `
     + `net=${marketingTotals.net_leads} deals=${marketingTotals.deals} `

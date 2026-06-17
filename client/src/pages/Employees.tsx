@@ -88,7 +88,7 @@ function EmployeeList() {
       <AlertBanner />
 
       {Object.entries(groups).map(([team, people]) => (
-        <Section key={team} title={team} subtitle={`${people.length} ${people.length === 1 ? "person" : "people"}`}>
+        <Section key={team} title={team} subtitle={`${people.length} ${people.length === 1 ? "person" : "people"}`} source={SRC.sales2026}>
           <div className="flex gap-3 overflow-x-auto pb-2 -mx-1 px-1">
             {people.map(p => {
               const stats = quickStats(p.name);
@@ -272,7 +272,7 @@ function EmployeeDetail({ slug }: { slug: string }) {
 
       {/* KPIs owned */}
       {ownedKpis.length > 0 && (
-        <Section title="KPIs This Person Owns" subtitle={`${ownedKpis.length} indicators`}>
+        <Section title="KPIs This Person Owns" subtitle={`${ownedKpis.length} indicators`} source={SRC.sales2026}>
           <Card padding="p-0">
             <div className="overflow-x-auto">
               <table className="w-full text-[12px]">
