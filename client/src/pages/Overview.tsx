@@ -86,9 +86,10 @@ export default function Overview() {
   const conversionFunnel = (data as any).conversionFunnel as
     | {
         windowDays: number;
+        windowLabel?: string;
         source: string;
         stages: { label: string; value: number; fromPrev: number | null; fromTop: number }[];
-        fubError?: string;
+        note?: string;
       }
     | undefined;
   const MONTHS = salesActiveMonths;
@@ -738,7 +739,7 @@ export default function Overview() {
 
       {/* Board Snapshot — Funnel + Deal Economics + Forward Pipeline */}
       {(conversionFunnel || dealEconomics || pipelineForward) && (
-        <Section title="Board Snapshot" subtitle={`Last ${conversionFunnel?.windowDays ?? 30} days conversion + deal economics + forward pipeline`}>
+        <Section title="Board Snapshot" subtitle={`${conversionFunnel?.windowLabel ?? `Last ${conversionFunnel?.windowDays ?? 30} days`} conversion + deal economics + forward pipeline`}>
           <div className="grid grid-cols-12 gap-3">
             {/* Conversion Funnel */}
             {conversionFunnel && (
@@ -749,7 +750,7 @@ export default function Overview() {
                       Conversion Funnel
                     </div>
                     <div className="text-lg font-semibold tracking-tight mt-0.5">
-                      Calls → Funded ({conversionFunnel.windowDays}d)
+                      Net Leads → Funded ({conversionFunnel.windowLabel ?? `${conversionFunnel.windowDays}d`})
                     </div>
                   </div>
                   <div className="text-[11px] text-muted-foreground">{conversionFunnel.source}</div>

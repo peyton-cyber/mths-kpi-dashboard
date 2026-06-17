@@ -268,18 +268,26 @@ export interface KpiData {
     source: "mock" | "live";
     lastUpdated: string;
   };
+  /** dispoFub removed 2026-06-17 — FUB data deemed inaccurate. Field kept
+   *  optional so older cached payloads still type-check; live API no longer
+   *  populates it. Disposition page now uses sheet-only Dispo 2026 KPIs. */
   dispoFub?: DispoFubData;
   mailchimp?: MailchimpData;
   weeklyMarketing?: WeeklyMarketingData;
+  /** Lead-Source ROI — now sheet-derived from Marketing 2026 KPIs (was FUB). */
   leadSources?: {
     windowDays: number;
+    windowLabel?: string;
     fetchedAt: string;
     error?: string;
     sources: { source: string; leads: number; appts: number; contracts: number; spend: number; cac: number; cpl: number }[];
     totalLeads: number;
     totalContracts: number;
     totalSpend: number;
+    source?: string;
   };
+  /** daysToClose — no longer computed (required FUB Under-Contract date).
+   *  See dealEconomics.avgDaysToClose on Overview for sheet-based equivalent. */
   daysToClose?: {
     avgDays: number | null;
     medianDays: number | null;
@@ -291,11 +299,25 @@ export interface KpiData {
     matched: number;
     method: string;
   };
+  /** Per-rep funnel — sheet-only from Sales 2026 KPIs (current KPI month).
+   *  Calls/Offers stages dropped (no sheet equivalent). */
   perRepFunnel?: {
-    windowDays: number;
+    windowLabel: string;
     closingsMonth: string;
     source: string;
-    reps: { rep: string; calls: number; apptsSet: number; apptsAttended: number; offers: number; contracts: number; closings: number; callToAppt: number; apptToOffer: number; offerToContract: number }[];
+    note: string;
+    reps: {
+      rep: string;
+      netLeads: number;
+      apptsSet: number;
+      apptsExecuted: number;
+      contracts: number;
+      droppedContracts: number;
+      closings: number;
+      leadToAppt: number;
+      apptToContract: number;
+      role: "LM" | "AQ";
+    }[];
   };
   dataFreshness?: Record<string, { fetchedAt?: string; error?: string; source?: string }>;
 }

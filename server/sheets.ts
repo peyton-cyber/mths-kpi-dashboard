@@ -12,10 +12,24 @@ import {
   fetchSheetRaw,
   type SheetResponse as ClientSheetResponse,
 } from "./google-sheets-client";
-import { fetchDispoFubData, type DispoFubData } from "./fub";
-import { fetchAcqFubData, type AcqFubData, AQ_REPS } from "./fub-acquisitions";
+// FUB removed per user request 2026-06-17: "can we make sure the system is
+// only pulling from the master KPIS, fub is too inaccurate".
+// All FUB fetchers (dispo, acq, lead sources) are no longer called. Per-rep
+// funnel, conversion funnel, acquisitions activity, and lead-source ROI are
+// now derived from Master KPIs (Sales 2026 KPIs, Dispo 2026 KPIs, Historic
+// Deal KPIs, Marketing 2026 KPIs) and Rev Tracker.
 import { fetchBouncieData, type BouncieData } from "./bouncie";
-import { fetchLeadSourceData, type FubLeadSourceData } from "./fub-lead-sources";
+
+// 6-rep canonical AQ list — kept locally so we retain tenure context that
+// FUB used to provide. Start dates match what FUB had on file.
+const AQ_REPS: { canonical: string; startDate: string }[] = [
+  { canonical: "Brandon",  startDate: "2023-08-28" },
+  { canonical: "Korbin",   startDate: "2024-05-22" },
+  { canonical: "Jeff H",   startDate: "2025-02-05" },
+  { canonical: "TJ",       startDate: "2025-12-05" },
+  { canonical: "Ryan",     startDate: "2026-01-24" },
+  { canonical: "Jonathan", startDate: "2026-02-16" },
+];
 import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
 import { fetchWeeklyMarketingData, type WeeklyMarketingData } from "./weeklyMarketing";
 import { buildKpiMonthCalendar, getCurrentKpiMonthIdx, type KpiMonth } from "./kpi-month";
@@ -236,8 +250,9 @@ export async function fetchAllKpiData() {
   const prevRiseTab = `Q${_prevQuarter} ${_prevYear} - RISE`;
   console.log(`[sheets] RISE tabs (auto): current="${currentRiseTab}", prev="${prevRiseTab}"`);
 
-  // Fetch sheets, Asana sprint goals, FUB dispo data, Mailchimp, and Weekly Marketing in parallel
-  const [sheets, sprintGoalsList, dispoFub, mailchimp, weeklyMarketing, acqFub, bouncie] = await Promise.all([
+  // Fetch sheets, Asana sprint goals, Mailchimp, Weekly Marketing, and Bouncie in parallel.
+  // FUB fetchers removed — see header note.
+  const [sheets, sprintGoalsList, mailchimp, weeklyMarketing, bouncie] = await Promise.all([
     fetchSheetsParallel([
       { label: "mktg", spreadsheetId: MASTER_KPIS, sheetName: "Marketing 2026 KPIs" },
       { label: "deals", spreadsheetId: MASTER_KPIS, sheetName: "TOP 10 DEALS" },
@@ -260,22 +275,6 @@ export async function fetchAllKpiData() {
     fetchAllSprintsThisYear(_now).catch((e) => {
       console.error(`[asana] sprint fetch failed: ${(e?.message || "").slice(0, 200)}`);
       return [] as SprintGoals[];
-    }),
-    fetchDispoFubData(process.env.FUB_API_KEY || "").catch((e): DispoFubData => {
-      console.error(`[fub] dispo fetch failed: ${(e?.message || "").slice(0, 200)}`);
-      return {
-        totalActiveDispo: 0,
-        totalClosedDispo: 0,
-        totalDropped: 0,
-        revenueAssignedByWeek: [],
-        avgAssignmentPerDeal: 0,
-        stageBreakdown: [],
-        byOwner: [],
-        byDealType: [],
-        source: "fub",
-        fetchedAt: new Date().toISOString(),
-        error: `FUB fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
-      };
     }),
     fetchMailchimpData(process.env.MAILCHIMP_API_KEY || "").catch((e): MailchimpData => {
       console.error(`[mailchimp] fetch failed: ${(e?.message || "").slice(0, 200)}`);
@@ -306,23 +305,6 @@ export async function fetchAllKpiData() {
         error: `weeklyMarketing fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
       };
     }),
-    fetchAcqFubData(process.env.FUB_API_KEY || "", 30).catch((e): AcqFubData => {
-      console.error(`[fub-acq] fetch failed: ${(e?.message || "").slice(0, 200)}`);
-      return {
-        windowDays: 30,
-        reps: AQ_REPS.map(r => ({
-          agent: r.canonical,
-          apptsSet: 0, apptsExecuted: 0, apptsCancelled: 0,
-          callCount: 0, talkTimeMin: 0,
-          contracts: 0, offersMade: 0,
-          hotLeads: 0, newLeads: 0,
-        })),
-        totals: { apptsSet: 0, apptsExecuted: 0, callCount: 0, talkTimeMin: 0, contracts: 0, offersMade: 0 },
-        fetchedAt: new Date().toISOString(),
-        source: "fub",
-        error: `FUB acq fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
-      };
-    }),
     fetchBouncieData(30).catch((e): BouncieData => {
       console.error(`[bouncie] fetch failed: ${(e?.message || "").slice(0, 200)}`);
       return {
@@ -340,16 +322,6 @@ export async function fetchAllKpiData() {
     console.warn(`[weeklyMarketing] returned error: ${weeklyMarketing.error}`);
   } else {
     console.log(`[weeklyMarketing] ${weeklyMarketing.records.length} records, ${weeklyMarketing.totals.weeksCovered} weeks, ${weeklyMarketing.totals.sourcesCovered} sources, ${weeklyMarketing.totals.grossLead} gross / ${weeklyMarketing.totals.netLead} net`);
-  }
-  if (dispoFub.error) {
-    console.warn(`[fub] dispo data returned error: ${dispoFub.error}`);
-  } else {
-    console.log(`[fub] dispo: ${dispoFub.totalActiveDispo} active, ${dispoFub.totalClosedDispo} closed, ${dispoFub.totalDropped} dropped, ${dispoFub.byOwner.length} owners`);
-  }
-  if (acqFub.error) {
-    console.warn(`[fub-acq] returned error: ${acqFub.error}`);
-  } else {
-    console.log(`[fub-acq] ${acqFub.reps.length} reps, totals: ${acqFub.totals.apptsSet} appts set, ${acqFub.totals.callCount} calls, ${acqFub.totals.talkTimeMin.toFixed(0)} talk min, ${acqFub.totals.contracts} contracts`);
   }
   if (mailchimp.error) {
     console.warn(`[mailchimp] returned error: ${mailchimp.error}`);
@@ -1096,49 +1068,57 @@ export async function fetchAllKpiData() {
   console.log(`[sheets] Pipeline forward: current-mo remaining $${pipelineCurrentMonthRemaining.value.toLocaleString()} (${pipelineCurrentMonthRemaining.count}), future-mo $${pipelineFutureMonths.value.toLocaleString()} (${pipelineFutureMonths.count}), TBD $${projectedBucket.value.toLocaleString()} (${projectedBucket.count})`);
 
   // ================================================================
-  // BOARD PREP: Conversion funnel (Calls → Appts → Offers → Contracts → Funded)
+  // BOARD PREP: Conversion funnel — sheet-only (Master KPIs)
   // ----------------------------------------------------------------
-  // Uses last 30 days FUB data + count of funded deals in the same window.
-  // Calls → ApptsSet → ApptsAttended → OffersMade → Contracts → FundedDeals
-  // Each step shows count + conversion % from the previous step.
-  const fubWindowDays = acqFub.windowDays || 30;
-  const fubWindowStart = new Date(Date.now() - fubWindowDays * 24 * 3600 * 1000);
-  let fundedInWindow = 0;
+  // Previously powered by FUB (last 30d). Now derived from Marketing 2026
+  // KPIs + Sales 2026 KPIs totals: Net Leads → Appts Set → Appts Executed
+  // → Contracts → Funded (Rev Tracker). Calls/Offers metrics are no longer
+  // tracked at the company level because FUB was the only source and the
+  // user said it's too inaccurate. Window is YTD over active KPI months.
+  const pctFn = (num: number, denom: number) =>
+    denom > 0 ? Math.round((num / denom) * 1000) / 10 : 0;
+  function sumActive(metricKey: string): number {
+    const bucket = salesMonthly[metricKey] || {};
+    let total = 0;
+    for (const m of activeMonths) {
+      const v = bucket[m];
+      if (typeof v === "number" && !isNaN(v)) total += v;
+    }
+    return total;
+  }
+  const cfNetLeads = sumActive("net_leads");
+  const cfApptsSet = sumActive("appts_set");
+  const cfApptsExec = sumActive("appts_executed");
+  const cfContracts = sumActive("contracts");
+  // Funded deals YTD from Rev Tracker (count of deals with parseable close date this year)
+  let cfFunded = 0;
   for (const deals of Object.values(dealsByMonth)) {
     for (const d of deals) {
       const parsed = parseCloseDate(d.closeDate);
-      if (parsed && parsed >= fubWindowStart && parsed <= TODAY) {
-        fundedInWindow += 1;
+      if (parsed && parsed.getFullYear() === _currentYear && parsed <= TODAY) {
+        cfFunded += 1;
       }
     }
   }
-  const tCalls = acqFub.totals.callCount || 0;
-  const tApptsSet = acqFub.totals.apptsSet || 0;
-  const tApptsExec = acqFub.totals.apptsExecuted || 0;
-  const tOffers = acqFub.totals.offersMade || 0;
-  const tContracts = acqFub.totals.contracts || 0;
-  const pct = (num: number, denom: number) =>
-    denom > 0 ? Math.round((num / denom) * 1000) / 10 : 0;
   const conversionFunnel = {
-    windowDays: fubWindowDays,
-    source: acqFub.error ? "error" : "fub+revtracker",
-    note: "Each stage counts events in the same window. Funded vs Contracts are different cohorts — funded deals were typically contracted 30-60 days earlier, so the % from Contracts to Funded reflects historical close rate, not this window's pipeline.",
+    windowDays: activeMonths.length * 30, // approx — client formats as "YTD"
+    windowLabel: `YTD (${activeMonths.length} mo)`,
+    source: "master_kpis+revtracker",
+    note: "Sheet-based YTD funnel from Master KPIs. Calls/Offers stages were FUB-only and have been removed because FUB data is unreliable. Funded counts deals with close date this year (different cohort than Contracts, which were typically signed 30-60 days earlier).",
     stages: [
-      { label: "Calls",       value: tCalls,        fromPrev: null,                              fromTop: 100 },
-      { label: "Appts Set",   value: tApptsSet,     fromPrev: pct(tApptsSet, tCalls),            fromTop: pct(tApptsSet, tCalls) },
-      { label: "Appts Attended", value: tApptsExec, fromPrev: pct(tApptsExec, tApptsSet),       fromTop: pct(tApptsExec, tCalls) },
-      { label: "Offers Made", value: tOffers,       fromPrev: pct(tOffers, tApptsExec),          fromTop: pct(tOffers, tCalls) },
-      { label: "Contracts",   value: tContracts,    fromPrev: pct(tContracts, tOffers),          fromTop: pct(tContracts, tCalls) },
-      { label: "Funded Deals", value: fundedInWindow, fromPrev: null /* different cohort — don't show misleading % */, fromTop: pct(fundedInWindow, tCalls) },
+      { label: "Net Leads",      value: cfNetLeads,  fromPrev: null,                                  fromTop: 100 },
+      { label: "Appts Set",      value: cfApptsSet,  fromPrev: pctFn(cfApptsSet, cfNetLeads),         fromTop: pctFn(cfApptsSet, cfNetLeads) },
+      { label: "Appts Executed", value: cfApptsExec, fromPrev: pctFn(cfApptsExec, cfApptsSet),        fromTop: pctFn(cfApptsExec, cfNetLeads) },
+      { label: "Contracts",      value: cfContracts, fromPrev: pctFn(cfContracts, cfApptsExec),       fromTop: pctFn(cfContracts, cfNetLeads) },
+      { label: "Funded Deals",   value: cfFunded,    fromPrev: null /* different cohort */,          fromTop: pctFn(cfFunded, cfNetLeads) },
     ],
-    fubError: acqFub.error,
   };
-  console.log(`[sheets] Conversion funnel (${fubWindowDays}d): ${tCalls} calls → ${tApptsSet} appts → ${tApptsExec} attended → ${tOffers} offers → ${tContracts} contracts → ${fundedInWindow} funded`);
+  console.log(`[sheets] Conversion funnel (sheet YTD, ${activeMonths.length}mo): ${cfNetLeads} net leads → ${cfApptsSet} appts → ${cfApptsExec} executed → ${cfContracts} contracts → ${cfFunded} funded`);
 
-  // Per-rep conversion funnel (same window): each rep gets their own column
-  // of calls → appts set → attended → offers → contracts. Closings come from
-  // Rev Tracker per-agent deal counts (this calendar month).
-  // KPI months are Mon→Sun — use the calendar-derived current KPI month
+  // Per-rep funnel is constructed later (after the per-rep Sales 2026 KPIs
+  // parser populates `leadManagers` and `aqAgents`). Placeholder declared
+  // here so downstream return references resolve; actual reps[] filled in
+  // around line ~1640 below.
   const currentMonthShort = MONTH_SHORT[CURRENT_KPI_MONTH_IDX];
   const SHEET_TO_CANONICAL_FUNNEL: Record<string, string> = {
     "Korbin": "Korbin", "Brandon": "Brandon", "Jeff Henry": "Jeff H",
@@ -1149,192 +1129,54 @@ export async function fetchAllKpiData() {
     const byMonth = perAgentDealCountByMonth[sheetName] || {};
     closingsThisMonthByRep[canonical] = byMonth[currentMonthShort] || 0;
   }
-  const perRepFunnel = {
-    windowDays: fubWindowDays,
+  // Will be filled in after lead-manager / AQ-agent parser runs.
+  const perRepFunnel: {
+    windowLabel: string;
+    closingsMonth: string;
+    source: string;
+    note: string;
+    reps: Array<{
+      rep: string;
+      netLeads: number;
+      apptsSet: number;
+      apptsExecuted: number;
+      contracts: number;
+      droppedContracts: number;
+      closings: number;
+      leadToAppt: number;
+      apptToContract: number;
+      role: "LM" | "AQ";
+    }>;
+  } = {
+    windowLabel: `${currentMonthShort} (current KPI month)`,
     closingsMonth: currentMonthShort,
-    source: "fub+revtracker",
-    reps: acqFub.reps.map(r => ({
-      rep: r.agent,
-      calls: r.callCount,
-      apptsSet: r.apptsSet,
-      apptsAttended: r.apptsExecuted,
-      offers: r.offersMade,
-      contracts: r.contracts,
-      closings: closingsThisMonthByRep[r.agent] || 0,
-      // conversion rates
-      callToAppt: r.callCount > 0 ? Math.round((r.apptsSet / r.callCount) * 1000) / 10 : 0,
-      apptToOffer: r.apptsExecuted > 0 ? Math.round((r.offersMade / r.apptsExecuted) * 1000) / 10 : 0,
-      offerToContract: r.offersMade > 0 ? Math.round((r.contracts / r.offersMade) * 1000) / 10 : 0,
-    })),
+    source: "master_kpis+revtracker",
+    note: "Per-rep KPIs from Sales 2026 KPIs (current KPI month, Mon→Sun). LMs show Net Leads Assigned → Appts Set → Contracted Appts. AQ shows Appts Executed → Contracts → Dropped. Closings come from Rev Tracker.",
+    reps: [],
   };
 
   // ================================================================
-  // DAYS-TO-CLOSE: average days between FUB Under-Contract date and
-  // Rev Tracker close date, per deal name match (fuzzy normalized).
+  // DAYS-TO-CLOSE — removed from per-deal join (FUB UC date dependency).
   // ----------------------------------------------------------------
-  // FUB deal names look like "Richard- 3730 Heather Dr, Clarksville" — strip the
-  // seller-first-name prefix before normalizing. Rev Tracker just has the address.
-  function extractAddress(s: string): string {
-    let v = (s || "").trim();
-    // Strip "FirstName- " or "FirstName : " prefix (letters/spaces then dash/colon)
-    v = v.replace(/^[A-Za-z\.\&\s']+[\-:\u2013]\s*/, "");
-    return v;
-  }
-  function normAddressKey(s: string): string {
-    // Rev Tracker has street names ONLY ("Ambrose Drive", "Dupree Lane"), no house
-    // number. FUB has full addresses ("610 Gusty Way, Mt Juliet"). To match, drop
-    // the leading house number, drop city/state after comma, drop street suffix
-    // and any tags like "(novation)", and keep just the street-name tokens.
-    const justStreet = (s || "").split(",")[0] || "";
-    return justStreet.toLowerCase()
-      // strip parenthetical tags like "(listing referral)", "(novation)", "(rental)"
-      .replace(/\([^)]*\)/g, " ")
-      // drop trailing/embedded tag words used in Rev Tracker without parens
-      .replace(/\b(listing referral|novation|rental|flip|wholesale)\b/g, " ")
-      // drop leading house number (e.g. "610 gusty way" -> " gusty way")
-      .replace(/^\s*\d+\s+/, " ")
-      // drop common street suffixes
-      .replace(/\b(street|str|st|drive|dr|road|rd|avenue|ave|av|lane|ln|court|ct|circle|cir|place|pl|boulevard|blvd|way|trail|tr|highway|hwy|parkway|pkwy)\b\.?/g, " ")
-      .replace(/[^a-z0-9 ]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  }
-
-  // ---------- Fuzzy address fallback helpers ----------
-  // Used when a FUB UC key doesn't directly match a Rev Tracker close key.
-  // Two strategies, tried in order:
-  //   1. Token-set Jaccard overlap (>= 0.6 with shared tokens >= 2 OR
-  //      single-token keys that match exactly after singular/plural strip)
-  //   2. Levenshtein edit distance <= 2 on the joined key (handles typos like
-  //      "hetaher" vs "heather" or "dupre" vs "dupree")
-  function tokenSet(k: string): Set<string> {
-    return new Set(k.split(/\s+/).filter(t => t.length >= 2));
-  }
-  function jaccard(a: Set<string>, b: Set<string>): number {
-    if (a.size === 0 || b.size === 0) return 0;
-    let inter = 0;
-    for (const t of a) if (b.has(t)) inter++;
-    const union = a.size + b.size - inter;
-    return union > 0 ? inter / union : 0;
-  }
-  function levenshtein(a: string, b: string): number {
-    if (a === b) return 0;
-    if (!a.length) return b.length;
-    if (!b.length) return a.length;
-    const m = a.length, n = b.length;
-    let prev = new Array(n + 1).fill(0);
-    let curr = new Array(n + 1).fill(0);
-    for (let j = 0; j <= n; j++) prev[j] = j;
-    for (let i = 1; i <= m; i++) {
-      curr[0] = i;
-      for (let j = 1; j <= n; j++) {
-        const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-        curr[j] = Math.min(curr[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
-      }
-      [prev, curr] = [curr, prev];
-    }
-    return prev[n];
-  }
-  function fuzzyFindBestMatch(
-    fubKey: string,
-    candidates: string[],
-  ): { key: string; score: number; method: string } | null {
-    if (!fubKey) return null;
-    const fubTokens = tokenSet(fubKey);
-    let best: { key: string; score: number; method: string } | null = null;
-    for (const c of candidates) {
-      if (!c) continue;
-      // Strategy 1: token Jaccard
-      const cTokens = tokenSet(c);
-      const j = jaccard(fubTokens, cTokens);
-      let inter = 0;
-      for (const t of fubTokens) if (cTokens.has(t)) inter++;
-      // Require Jaccard >= 0.6 with at least 2 shared tokens, OR single-token
-      // keys where the only token matches.
-      const tokenOk =
-        (j >= 0.6 && inter >= 2) ||
-        (fubTokens.size === 1 && cTokens.size === 1 && j === 1);
-      if (tokenOk && (!best || j > best.score)) {
-        best = { key: c, score: j, method: "token" };
-      }
-      // Strategy 2: Levenshtein on joined key (cheap fallback for typos).
-      // Only consider when keys are similar length (within 4 chars) to avoid
-      // huge cross-matches.
-      if (Math.abs(fubKey.length - c.length) <= 4) {
-        const d = levenshtein(fubKey, c);
-        const maxLen = Math.max(fubKey.length, c.length);
-        if (d <= 2 && maxLen >= 5) {
-          const score = 1 - d / maxLen;
-          if (!best || score > best.score) {
-            best = { key: c, score, method: "lev" };
-          }
-        }
-      }
-    }
-    return best;
-  }
-  const ucByName = new Map<string, Date>();
-  // Pull UC dates from acqFub.dealsWithUC (added in fub-acquisitions.ts) — that
-  // covers AQ + Dispo + Novations + Flips + Listing-Referrals pipelines.
-  const dealsWithUC = (acqFub as any).dealsWithUC || [];
-  for (const d of dealsWithUC) {
-    if (d.name && d.ucDate) {
-      const k = normAddressKey(extractAddress(d.name));
-      if (k && !ucByName.has(k)) ucByName.set(k, new Date(d.ucDate));
-    }
-  }
-  const closeByName = new Map<string, Date>();
-  for (const deals of Object.values(dealsByMonth)) {
-    for (const d of deals) {
-      const k = normAddressKey(d.deal || "");
-      const closeDate = parseCloseDate(d.closeDate);
-      if (k && closeDate && !closeByName.has(k)) closeByName.set(k, closeDate);
-    }
-  }
-  const dtcSamples: { deal: string; days: number }[] = [];
-  let exactMatches = 0;
-  let fuzzyMatches = 0;
-  const closeKeys = Array.from(closeByName.keys());
-  for (const [name, ucDate] of ucByName.entries()) {
-    let closeDate = closeByName.get(name);
-    let method = "exact";
-    if (!closeDate) {
-      const fuzzy = fuzzyFindBestMatch(name, closeKeys);
-      if (fuzzy) {
-        closeDate = closeByName.get(fuzzy.key);
-        method = `fuzzy-${fuzzy.method}`;
-      }
-    }
-    if (closeDate) {
-      const days = Math.round((closeDate.getTime() - ucDate.getTime()) / (24 * 3600 * 1000));
-      if (days >= 0 && days < 365) {
-        dtcSamples.push({ deal: name.slice(0, 60), days });
-        if (method === "exact") exactMatches++; else fuzzyMatches++;
-      }
-    }
-  }
-  const dtcAvg = dtcSamples.length > 0
-    ? Math.round(dtcSamples.reduce((s, x) => s + x.days, 0) / dtcSamples.length)
-    : null;
-  const dtcMedian = dtcSamples.length > 0
-    ? dtcSamples.map(x => x.days).sort((a, b) => a - b)[Math.floor(dtcSamples.length / 2)]
-    : null;
+  // The detailed FUB-UC-date ↔ Rev-Tracker close-date join was the only way
+  // to compute precise per-deal cycle time. With FUB removed, we surface the
+  // sheet-derived `dealEconomics.avgDaysToClose` (Rev Tracker close-date −
+  // month-start) on the Overview Board Snapshot instead. The structured
+  // `daysToClose` object below is kept as an empty placeholder so client
+  // code that references it doesn't crash; tile is hidden when sampleSize=0.
   const daysToClose = {
-    avgDays: dtcAvg,
-    medianDays: dtcMedian,
-    sampleSize: dtcSamples.length,
-    fastest: dtcSamples.length > 0
-      ? Math.min(...dtcSamples.map(x => x.days)) : null,
-    slowest: dtcSamples.length > 0
-      ? Math.max(...dtcSamples.map(x => x.days)) : null,
-    fubFound: ucByName.size,
-    revTrackerFound: closeByName.size,
-    matched: dtcSamples.length,
-    exactMatches,
-    fuzzyMatches,
-    method: "street-name join (exact + token Jaccard + Levenshtein fallback) — FUB UC date ↔ Rev Tracker close date",
+    avgDays: null as number | null,
+    medianDays: null as number | null,
+    sampleSize: 0,
+    fastest: null as number | null,
+    slowest: null as number | null,
+    fubFound: 0,
+    revTrackerFound: 0,
+    matched: 0,
+    exactMatches: 0,
+    fuzzyMatches: 0,
+    method: "unavailable — FUB removed (was the only Under-Contract date source). See Overview → Deal Economics for sheet-based avg days to close.",
   };
-  console.log(`[sheets] Days-to-close: avg ${dtcAvg}d, median ${dtcMedian}d (n=${dtcSamples.length}; exact=${exactMatches}, fuzzy=${fuzzyMatches}; FUB UC=${ucByName.size}, RT close=${closeByName.size})`);
 
   // ================================================================
   // PHASE 8: REVENUE TRACKER IS NOW THE SOURCE OF TRUTH FOR REVENUE
@@ -1663,6 +1505,91 @@ export async function fetchAllKpiData() {
       }
     }
   }
+
+  // ================================================================
+  // 4a. PER-REP FUNNEL — backfill from sheet-only per-rep data.
+  // ----------------------------------------------------------------
+  // Sales 2026 KPIs has each LM and AQ rep with monthly columns. Use the
+  // current KPI month to populate the per-rep funnel object declared earlier.
+  // LMs: Net Leads → Appts Set → Contracted Appts (no execution/contract step).
+  // AQ:  Appts Executed → Contracts → Dropped Contracts.
+  // We collapse both roles into one row per rep so the existing per-rep table
+  // can render uniform columns; LM rows leave AQ-only columns at 0 and AQ
+  // rows leave LM-only columns at 0.
+  //
+  // Sheet → canonical rep mapping (Sales 2026 KPIs uses display names that
+  // sometimes differ from our 6-rep canonical list).
+  const SALES_SHEET_TO_CANONICAL: Record<string, { canonical: string; role: "LM" | "AQ" }> = {
+    // Lead Managers
+    "Brandon Goff":     { canonical: "Brandon",  role: "LM" },
+    "Brandon":          { canonical: "Brandon",  role: "LM" },
+    "Jeff Henry":       { canonical: "Jeff H",   role: "LM" },
+    "Jeff H":           { canonical: "Jeff H",   role: "LM" },
+    "Johnathan":        { canonical: "Jonathan", role: "LM" },
+    "Jonathan":         { canonical: "Jonathan", role: "LM" },
+    "Jonathan Medlin":  { canonical: "Jonathan", role: "LM" },
+    // AQ Agents
+    "Korbin":           { canonical: "Korbin",   role: "AQ" },
+    "Korbin Karst":     { canonical: "Korbin",   role: "AQ" },
+    "TJ":               { canonical: "TJ",       role: "AQ" },
+    "Ryan":             { canonical: "Ryan",     role: "AQ" },
+    "Ryan Craig":       { canonical: "Ryan",     role: "AQ" },
+  };
+  const repRows = new Map<string, {
+    rep: string; role: "LM" | "AQ";
+    netLeads: number; apptsSet: number; apptsExecuted: number;
+    contracts: number; droppedContracts: number;
+  }>();
+  for (const [sheetName, lm] of Object.entries(leadManagers)) {
+    const map = SALES_SHEET_TO_CANONICAL[sheetName];
+    if (!map) continue;
+    const mk = currentMonthShort;
+    const existing = repRows.get(map.canonical) || {
+      rep: map.canonical, role: map.role,
+      netLeads: 0, apptsSet: 0, apptsExecuted: 0, contracts: 0, droppedContracts: 0,
+    };
+    existing.netLeads += lm.net_leads[mk] || 0;
+    existing.apptsSet += lm.appts_set[mk] || 0;
+    // Lead Manager "Contracted Appts" = appts that became contracts (an AQ outcome
+    // assigned back to the LM). Treat as the LM's "contracts" surrogate.
+    existing.contracts += lm.contracted[mk] || 0;
+    repRows.set(map.canonical, existing);
+  }
+  for (const [sheetName, aq] of Object.entries(aqAgents)) {
+    const map = SALES_SHEET_TO_CANONICAL[sheetName];
+    if (!map) continue;
+    const mk = currentMonthShort;
+    const existing = repRows.get(map.canonical) || {
+      rep: map.canonical, role: map.role,
+      netLeads: 0, apptsSet: 0, apptsExecuted: 0, contracts: 0, droppedContracts: 0,
+    };
+    existing.apptsExecuted += aq.appts_executed[mk] || 0;
+    existing.contracts += aq.contracts[mk] || 0;
+    existing.droppedContracts += aq.dropped_contracts[mk] || 0;
+    repRows.set(map.canonical, existing);
+  }
+  // Always emit our 6 canonical reps in a stable order (matches dashboards).
+  const REP_ORDER = ["Brandon", "Korbin", "Jeff H", "TJ", "Ryan", "Jonathan"];
+  for (const name of REP_ORDER) {
+    const r = repRows.get(name) || {
+      rep: name,
+      role: AQ_REPS.find(x => x.canonical === name)?.canonical === name ? "AQ" as const : "LM" as const,
+      netLeads: 0, apptsSet: 0, apptsExecuted: 0, contracts: 0, droppedContracts: 0,
+    };
+    perRepFunnel.reps.push({
+      rep: r.rep,
+      netLeads: r.netLeads,
+      apptsSet: r.apptsSet,
+      apptsExecuted: r.apptsExecuted,
+      contracts: r.contracts,
+      droppedContracts: r.droppedContracts,
+      closings: closingsThisMonthByRep[r.rep] || 0,
+      leadToAppt: r.netLeads > 0 ? Math.round((r.apptsSet / r.netLeads) * 1000) / 10 : 0,
+      apptToContract: r.apptsSet > 0 ? Math.round((r.contracts / r.apptsSet) * 1000) / 10 : 0,
+      role: r.role,
+    });
+  }
+  console.log(`[sheets] Per-rep funnel (sheet ${currentMonthShort}): ${perRepFunnel.reps.length} reps, totals net-leads=${perRepFunnel.reps.reduce((s, r) => s + r.netLeads, 0)}, contracts=${perRepFunnel.reps.reduce((s, r) => s + r.contracts, 0)}, closings=${perRepFunnel.reps.reduce((s, r) => s + r.closings, 0)}`);
 
   // ================================================================
   // 4b. RISE WEEKLY METRICS — From Sales Stoplight Report
@@ -3109,10 +3036,11 @@ export async function fetchAllKpiData() {
       a.avgApptsSet    = Math.round((a.apptsSet / a.days) * 10) / 10;
     }
   }
-  // PHASE 8: Overlay FUB-sourced AQ stats so reps with zero/missing sheet
-  // data still show real numbers. FUB is the live source of truth for the
-  // 6 reporting reps (Korbin, Brandon, Jeff H, TJ, Ryan, Jonathan); sheet
-  // remains source for windshield/drive-time which FUB doesn't track.
+  // FUB overlay removed (user said FUB is inaccurate). Sheet is now the sole
+  // source for AQ stats; Bouncie still provides drive/idle time for the 2
+  // reps with paired devices (Korbin, TJ).
+  // The 6-rep canonical AQ list (Korbin, Brandon, Jeff H, TJ, Ryan, Jonathan)
+  // is enforced via REP_ORDER and the Sales 2026 KPIs per-rep parser above.
   const acqRepsBySheet = new Map<string, AcqAgent>();
   for (const a of Object.values(byAgent)) {
     // Normalize sheet agent name to FUB canonical
@@ -3159,56 +3087,64 @@ export async function fetchAllKpiData() {
     bouncieByRep[b.rep] = { drive: b.driveTimeMin, idle: b.idleTimeMin, distance: b.distanceMi };
   }
 
-  // Merge: prefer FUB data for the 6 reporting reps, prefer Bouncie for drive/windshield
-  // time when a device is paired; otherwise fall back to sheet manual entries.
+  // Sheet + Bouncie merge: AQ Activity sheet provides manual entries for
+  // talk time, touch points, drive time, etc. Bouncie overrides drive/idle
+  // for reps with a paired device. Sales 2026 KPIs (current KPI month)
+  // provides current-month per-rep AQ funnel (appts set / executed /
+  // contracts / dropped). Rev Tracker provides YTD contract counts.
   const mergedAgents: AcqAgent[] = [];
-  for (const fubRep of acqFub.reps) {
-    const sheetRep = acqRepsBySheet.get(fubRep.agent);
-    const days = Math.max(sheetRep?.days || 0, acqFub.windowDays);
-    const bouncieRep = bouncieByRep[fubRep.agent];
-    const ytdContracts = ytdDealsByRep[fubRep.agent] || 0;
-    const monthsSince = Math.max(1, fubRep.monthsSinceStart || 0);
+  const ACQ_WINDOW_DAYS = 30; // matches Bouncie + AQ Activity sheet rolling window
+  for (const repInfo of AQ_REPS) {
+    const canonical = repInfo.canonical;
+    const sheetRep = acqRepsBySheet.get(canonical);
+    const bouncieRep = bouncieByRep[canonical];
+    const ytdContracts = ytdDealsByRep[canonical] || 0;
+    const startMs = new Date(repInfo.startDate + "T00:00:00Z").getTime();
+    const daysSinceStart = Math.max(0, Math.floor((Date.now() - startMs) / 86_400_000));
+    const monthsSinceStart = +(daysSinceStart / 30.44).toFixed(2);
+    const monthsSince = Math.max(1, monthsSinceStart);
+    // Current-KPI-month per-rep numbers from Sales 2026 KPIs
+    const sk = repRows.get(canonical);
+    const days = sheetRep?.days || ACQ_WINDOW_DAYS;
     const merged: AcqAgent = {
-      agent: fubRep.agent,
+      agent: canonical,
       days,
       driveTime: bouncieRep ? bouncieRep.drive : (sheetRep?.driveTime || 0),
       windshieldTime: bouncieRep ? bouncieRep.idle : (sheetRep?.windshieldTime || 0),
-      talkTime: Math.round(fubRep.talkTimeMin),
-      touchPoints: fubRep.callCount,
-      apptsSet: fubRep.apptsSet,
-      apptsAttended: fubRep.apptsExecuted,
-      offers: fubRep.offersMade,
-      contracts: fubRep.contracts,
-      // YTD from Rev Tracker (authoritative cross-check, includes Novations/Flips/Listings)
+      talkTime: sheetRep?.talkTime || 0,
+      touchPoints: sheetRep?.touchPoints || 0,
+      apptsSet: sk?.apptsSet ?? (sheetRep?.apptsSet || 0),
+      apptsAttended: sk?.apptsExecuted ?? (sheetRep?.apptsAttended || 0),
+      offers: sheetRep?.offers || 0, // no sheet equivalent — keep manual if entered
+      contracts: sk?.contracts ?? (sheetRep?.contracts || 0),
       contractsYtd: ytdContracts,
-      contractsByMonth: monthlyDealsByRep[fubRep.agent] || {},
-      avgTalkTime: days > 0 ? Math.round(fubRep.talkTimeMin / days) : 0,
-      avgTouchPoints: days > 0 ? Math.round(fubRep.callCount / days) : 0,
-      avgApptsSet: days > 0 ? Math.round((fubRep.apptsSet / days) * 10) / 10 : 0,
-      target: acqTargetByAgent[fubRep.agent] || acqTargetByAgent[sheetRep?.agent || ""],
-      // Tenure context (Jonathan/Ryan/TJ are mid-year starters — don't compare
-      // their YTD to Brandon/Korbin without context)
-      startDate: fubRep.startDate,
-      daysSinceStart: fubRep.daysSinceStart,
-      monthsSinceStart: fubRep.monthsSinceStart,
+      contractsByMonth: monthlyDealsByRep[canonical] || {},
+      avgTalkTime: days > 0 ? Math.round((sheetRep?.talkTime || 0) / days) : 0,
+      avgTouchPoints: days > 0 ? Math.round((sheetRep?.touchPoints || 0) / days) : 0,
+      avgApptsSet: days > 0 ? Math.round(((sk?.apptsSet ?? sheetRep?.apptsSet ?? 0) / days) * 10) / 10 : 0,
+      target: acqTargetByAgent[canonical] || acqTargetByAgent[sheetRep?.agent || ""],
+      startDate: repInfo.startDate,
+      daysSinceStart,
+      monthsSinceStart,
       contractsPerMonthSinceStart: Math.round((ytdContracts / monthsSince) * 10) / 10,
     } as AcqAgent & { contractsYtd: number; contractsByMonth: Record<string, number> };
     mergedAgents.push(merged);
   }
-  // Include any sheet agents that aren't in the FUB 6-rep list (e.g. legacy)
+  // Include any sheet agents that aren't in the canonical 6-rep list (e.g. legacy)
   for (const [canonical, a] of acqRepsBySheet.entries()) {
     if (!mergedAgents.find(m => m.agent === canonical)) {
       mergedAgents.push(a);
     }
   }
 
+  const acqFetchedAt = new Date().toISOString();
   const acquisitionsActivity = {
-    windowDays: acqFub.windowDays,
+    windowDays: ACQ_WINDOW_DAYS,
     agents: mergedAgents.sort((x, y) => y.contracts - x.contracts || y.apptsSet - x.apptsSet),
     rowCount: acqActivityRows.length,
-    source: acqFub.error ? "sheet" : "fub",
-    fubError: acqFub.error,
-    fetchedAt: acqFub.fetchedAt,
+    source: "master_kpis+revtracker+bouncie",
+    fubError: undefined,
+    fetchedAt: acqFetchedAt,
     bouncie: {
       vehiclesConnected: bouncie.vehiclesConnected,
       repsWithDevices: bouncie.reps.map(r => r.rep),
@@ -3307,20 +3243,47 @@ export async function fetchAllKpiData() {
       }
     }
   }
-  const leadSourcesData: FubLeadSourceData = await fetchLeadSourceData(
-    process.env.FUB_API_KEY || "",
-    spendByChannel,
-    90,
-  ).catch((e): FubLeadSourceData => ({
-    windowDays: 90, fetchedAt: new Date().toISOString(), sources: [],
-    totalLeads: 0, totalContracts: 0, totalSpend: 0,
-    error: `lead-source fetch threw: ${(e?.message || "unknown").slice(0, 200)}`,
-  }));
-  if (leadSourcesData.error) {
-    console.warn(`[lead-sources] ${leadSourcesData.error}`);
-  } else {
-    console.log(`[lead-sources] ${leadSourcesData.sources.length} sources, ${leadSourcesData.totalLeads} leads, ${leadSourcesData.totalContracts} contracts in last ${leadSourcesData.windowDays}d`);
-  }
+  // Lead-Source ROI — sheet-derived from Marketing 2026 KPIs.
+  // Previously powered by FUB tag aggregation. Now sums each channel's Gross
+  // Leads, Net Leads (treated as appts proxy at marketing level), Deals
+  // (contracts), and Marketing Spend across active KPI months. CPL = spend /
+  // gross-leads, CAC = spend / contracts.
+  type SheetLeadSource = {
+    source: string;
+    leads: number;
+    appts: number;
+    contracts: number;
+    spend: number;
+    cpl: number;
+    cac: number;
+  };
+  const sourceTotals: SheetLeadSource[] = marketingChannels.map(ch => {
+    const leads = ch.grossLeads || 0;
+    const appts = ch.netLeads || 0; // best sheet proxy for "engaged" leads
+    const contracts = ch.deals || 0;
+    const spend = ch.spend || 0;
+    return {
+      source: ch.name,
+      leads,
+      appts,
+      contracts,
+      spend,
+      cpl: leads > 0 ? Math.round((spend / leads) * 100) / 100 : 0,
+      cac: contracts > 0 ? Math.round((spend / contracts) * 100) / 100 : 0,
+    };
+  }).filter(r => r.leads > 0 || r.contracts > 0 || r.spend > 0);
+  const leadSourcesData = {
+    windowDays: activeMonths.length * 30, // approximate — actually YTD active months
+    windowLabel: `YTD (${activeMonths.length} mo)`,
+    fetchedAt: new Date().toISOString(),
+    sources: sourceTotals,
+    totalLeads:     sourceTotals.reduce((s, r) => s + r.leads, 0),
+    totalContracts: sourceTotals.reduce((s, r) => s + r.contracts, 0),
+    totalSpend:     sourceTotals.reduce((s, r) => s + r.spend, 0),
+    source: "master_kpis_marketing_2026",
+    error: undefined as string | undefined,
+  };
+  console.log(`[lead-sources] (sheet) ${leadSourcesData.sources.length} sources, ${leadSourcesData.totalLeads} leads, ${leadSourcesData.totalContracts} contracts, $${leadSourcesData.totalSpend.toLocaleString()} spend`);
 
   // ---------- KPI Ownership Map ----------
   const ownerRows = sheets.kpiOwners?.rows || [];
@@ -3575,12 +3538,10 @@ export async function fetchAllKpiData() {
     perRepFunnel,
     dataFreshness: {
       sheets:           { fetchedAt: lastUpdated, source: "google_sheets" },
-      fubDispo:         { fetchedAt: dispoFub.fetchedAt, error: dispoFub.error, source: "fub" },
-      fubAcq:           { fetchedAt: acqFub.fetchedAt, error: acqFub.error, source: "fub" },
       mailchimp:        { fetchedAt: (mailchimp as any).fetchedAt, error: (mailchimp as any).error, source: "mailchimp" },
       weeklyMarketing:  { fetchedAt: weeklyMarketing.fetchedAt, error: weeklyMarketing.error, source: "google_sheets" },
       bouncie:          { fetchedAt: bouncie.fetchedAt, source: "bouncie" },
-      leadSources:      { fetchedAt: leadSourcesData.fetchedAt, error: leadSourcesData.error, source: "fub" },
+      leadSources:      { fetchedAt: leadSourcesData.fetchedAt, error: leadSourcesData.error, source: "master_kpis" },
       computedAt:       new Date().toISOString(),
       staleAlerts:      computeStaleAlerts({
                           ytdRevenue: ytd.revenue,
@@ -3590,10 +3551,9 @@ export async function fetchAllKpiData() {
                           leadSourceLeads: leadSourcesData.totalLeads,
                           daysToCloseSamples: daysToClose.matched,
                           bouncieReps: bouncie.reps.length,
-                          fubAcqContracts: acqFub.totals?.contracts || 0,
+                          fubAcqContracts: 0, // FUB removed — keeping field for compat
                         }),
     },
-    dispoFub,
     mailchimp,
     weeklyMarketing,
   };

@@ -398,7 +398,10 @@ export async function registerRoutes(
         return;
       }
       const ytd = (data as any).ytd || {};
-      const fub = data.dispoFub || ({} as any);
+      const dispoReps = (data as any).dispoWeekly?.reps || [];
+      const dispoTotalDeals = dispoReps.reduce((s: number, r: any) => s + (r.total_deals || 0), 0);
+      const dispoTotalAssign = dispoReps.reduce((s: number, r: any) => s + ((r.avg_assignment || 0) * (r.total_deals || 0)), 0);
+      const dispoAvgFee = dispoTotalDeals > 0 ? Math.round(dispoTotalAssign / dispoTotalDeals) : 0;
       const mc = data.mailchimp || ({} as any);
       const wm = data.weeklyMarketing || ({} as any);
       const last4Weeks = (wm.byWeek || []).slice(-4);
@@ -418,9 +421,8 @@ export async function registerRoutes(
       lines.push(`• Contracts: ${ytd.contracts || 0}`);
       lines.push(`• Marketing spend: ${fmt$(ytd.marketing_spend || 0)}`);
       lines.push("");
-      lines.push("*Dispo Pipeline (FUB live)*");
-      lines.push(`• Active: ${fub.totalActiveDispo || 0} · Closed: ${fub.totalClosedDispo || 0} · Dropped: ${fub.totalDropped || 0}`);
-      lines.push(`• Avg fee: ${fmt$(fub.avgAssignmentPerDeal || 0)}`);
+      lines.push("*Dispo Pipeline · Dispo 2026 KPIs*");
+      lines.push(`• Deals YTD: ${dispoTotalDeals} · Avg fee: ${fmt$(dispoAvgFee)}`);
       lines.push("");
       lines.push("*Marketing Funnel · last 4 weeks*");
       lines.push(`• ${last4Gross.toLocaleString()} gross / ${last4Net.toLocaleString()} net (${last4NetPct}%)`);

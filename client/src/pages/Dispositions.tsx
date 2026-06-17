@@ -46,7 +46,7 @@ export default function Dispositions() {
   const [period, setPeriod] = useState<TimePeriod>("month");
   const data = useKpi();
 
-  const { dispoWeekly, newBuyers, salesMonthly, surveyResults, ytd, activeMonths, salesActiveMonths, dailyDispo, dispoFub, mailchimp } = data;
+  const { dispoWeekly, newBuyers, salesMonthly, surveyResults, ytd, activeMonths, salesActiveMonths, dailyDispo, mailchimp } = data;
 
   const reps        = dispoWeekly.reps;
   const commissions = dispoWeekly.commissions;
@@ -372,205 +372,95 @@ export default function Dispositions() {
         </div>
       </div>
 
-      {/* FUB Disposition Pipeline — primary source per Aug 5 leadership feedback.
-          Excludes Novation / Flip / Rental / Listing Referral pipelines. */}
-      {dispoFub && !dispoFub.error && (
+      {/* Disposition Pipeline — sheet-derived from Dispo 2026 KPIs + Revenue Tracker.
+          FUB removed per leadership: master KPIs are the only source of truth. */}
+      {dispoWeekly.reps.length > 0 && (
         <Section
-          title="Disposition Pipeline · Live from Follow Up Boss"
-          subtitle={`Disposition pipeline only — excludes Novation, Flip, Rental, Listing Referral. Synced ${new Date(dispoFub.fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`}
+          title="Disposition Pipeline · From Dispo 2026 KPIs"
+          subtitle={`Per-rep dispo activity from the Dispo 2026 KPIs sheet + Revenue Tracker assignments. ${dispLabel}`}
         >
-          <div className="grid grid-cols-12 gap-3">
-            <Scorecard
-              label="Active Dispo Deals"
-              value={dispoFub.totalActiveDispo}
-              sub="In dispo pipeline · not yet closed"
-              size="lg"
-              status="green"
-              className="col-span-6 md:col-span-3"
-            />
-            <Scorecard
-              label="Closed (YTD via FUB)"
-              value={dispoFub.totalClosedDispo}
-              sub="Stage = Closed Deal"
-              size="lg"
-              status="green"
-              className="col-span-6 md:col-span-3"
-            />
-            <Scorecard
-              label="Avg Assignment Fee"
-              value={fmtMoney(dispoFub.avgAssignmentPerDeal)}
-              sub="Rolling 30 days"
-              size="lg"
-              status={statusFromTarget(dispoFub.avgAssignmentPerDeal, t.avg_assignment)}
-              metricKey="pushed_to_assigned"
-              className="col-span-6 md:col-span-3"
-            />
-            <Scorecard
-              label="Dropped (FUB)"
-              value={dispoFub.totalDropped}
-              sub="Dropped pipeline"
-              size="lg"
-              status={dispoFub.totalDropped > 50 ? "yellow" : "green"}
-              metricKey="dropped_contracts"
-              className="col-span-6 md:col-span-3"
-            />
-          </div>
+          {(() => {
+            const allReps = dispoWeekly.reps;
+            const totalDeals = allReps.reduce((s, r) => s + (r.total_deals || 0), 0);
+            const totalAssignment = allReps.reduce((s, r) => s + ((r.avg_assignment || 0) * (r.total_deals || 0)), 0);
+            const avgAssignment = totalDeals > 0 ? Math.round(totalAssignment / totalDeals) : 0;
+            const totalAttendance = allReps.reduce((s, r) => s + (r.total_attendance || 0), 0);
+            const totalOffers = allReps.reduce((s, r) => s + (r.total_offers || 0), 0);
+            return (
+              <div className="grid grid-cols-12 gap-3">
+                <Scorecard
+                  label="Dispo Deals (2026 YTD)"
+                  value={totalDeals}
+                  sub="From Dispo 2026 KPIs sheet"
+                  size="lg"
+                  status="green"
+                  className="col-span-6 md:col-span-3"
+                />
+                <Scorecard
+                  label="Avg Assignment Fee"
+                  value={fmtMoney(avgAssignment)}
+                  sub="Across all 2026 deals"
+                  size="lg"
+                  status={statusFromTarget(avgAssignment, t.avg_assignment)}
+                  metricKey="pushed_to_assigned"
+                  className="col-span-6 md:col-span-3"
+                />
+                <Scorecard
+                  label="Total Attendance"
+                  value={totalAttendance}
+                  sub="All reps · YTD"
+                  size="lg"
+                  status="green"
+                  className="col-span-6 md:col-span-3"
+                />
+                <Scorecard
+                  label="Total Offers"
+                  value={totalOffers}
+                  sub="All reps · YTD"
+                  size="lg"
+                  status="green"
+                  className="col-span-6 md:col-span-3"
+                />
+              </div>
+            );
+          })()}
 
           <div className="grid grid-cols-12 gap-3 mt-3">
-            {/* Stage breakdown */}
-            <Card className="col-span-12 lg:col-span-6" padding="p-5">
+            {/* Per-rep dispo breakdown */}
+            <Card className="col-span-12" padding="p-5">
               <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
-                Active Stage Breakdown
+                Per-Rep · 2026 Dispo Activity
               </div>
               <div className="text-lg font-semibold tracking-tight mt-0.5">
-                {dispoFub.totalActiveDispo} active deals by stage
-              </div>
-              <div className="mt-3 space-y-2">
-                {dispoFub.stageBreakdown.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No active deals</div>
-                ) : (
-                  dispoFub.stageBreakdown.map((s) => {
-                    const max = Math.max(...dispoFub.stageBreakdown.map((x) => x.count), 1);
-                    return (
-                      <div key={s.stage} className="space-y-1">
-                        <div className="flex items-center justify-between text-[13px]">
-                          <span className="font-medium">{s.stage}</span>
-                          <span className="num text-muted-foreground">
-                            {s.count} · {fmtMoney(s.totalPrice)}
-                          </span>
-                        </div>
-                        <div className="h-2 rounded-full bg-muted overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-primary"
-                            style={{ width: `${(s.count / max) * 100}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </Card>
-
-            {/* By owner */}
-            <Card className="col-span-12 lg:col-span-6" padding="p-5">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
-                Ownership · Each Deal Counted Once
-              </div>
-              <div className="text-lg font-semibold tracking-tight mt-0.5">
-                Dispo deals by owner
+                Deals · Avg Assignment · Attendance · Offers
               </div>
               <div className="mt-3">
-                <div className="grid grid-cols-[1fr_60px_60px_90px] gap-2 text-[10px] uppercase tracking-[0.14em] text-muted-foreground pb-2 border-b">
-                  <div>Owner</div>
-                  <div className="text-right">Active</div>
-                  <div className="text-right">Closed</div>
-                  <div className="text-right">Assigned $</div>
+                <div className="grid grid-cols-[1fr_80px_120px_100px_80px] gap-2 text-[10px] uppercase tracking-[0.14em] text-muted-foreground pb-2 border-b">
+                  <div>Rep</div>
+                  <div className="text-right">Deals</div>
+                  <div className="text-right">Avg Assignment</div>
+                  <div className="text-right">Attendance</div>
+                  <div className="text-right">Offers</div>
                 </div>
-                {dispoFub.byOwner.length === 0 ? (
-                  <div className="text-sm text-muted-foreground py-4">No owner data</div>
-                ) : (
-                  dispoFub.byOwner.slice(0, 8).map((o) => (
+                {dispoWeekly.reps
+                  .slice()
+                  .sort((a, b) => (b.total_deals || 0) - (a.total_deals || 0))
+                  .map((rep) => (
                     <div
-                      key={o.owner}
-                      className="grid grid-cols-[1fr_60px_60px_90px] gap-2 py-2 border-b border-border/40 text-[13px]"
+                      key={rep.name}
+                      className="grid grid-cols-[1fr_80px_120px_100px_80px] gap-2 py-2 border-b border-border/40 text-[13px]"
                     >
-                      <div className="font-medium truncate">{o.owner}</div>
-                      <div className="text-right num">{o.activeCount}</div>
-                      <div className="text-right num">{o.closedCount}</div>
-                      <div className="text-right num">{fmtMoney(o.assignedRev)}</div>
+                      <div className="font-medium truncate">{rep.name}</div>
+                      <div className="text-right num">{rep.total_deals}</div>
+                      <div className="text-right num">{fmtMoney(rep.avg_assignment)}</div>
+                      <div className="text-right num">{rep.total_attendance}</div>
+                      <div className="text-right num">{rep.total_offers}</div>
                     </div>
-                  ))
-                )}
-              </div>
-            </Card>
-          </div>
-
-          <div className="grid grid-cols-12 gap-3 mt-3">
-            {/* Weekly assigned revenue */}
-            <Card className="col-span-12 lg:col-span-8" padding="p-5">
-              <div className="mb-3">
-                <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
-                  Revenue Assigned per Week
-                </div>
-                <div className="text-lg font-semibold tracking-tight mt-0.5">
-                  Last {dispoFub.revenueAssignedByWeek.length} weeks of dispo activity
-                </div>
-              </div>
-              <div className="h-[220px]">
-                {dispoFub.revenueAssignedByWeek.length === 0 ? (
-                  <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-                    No recent assignment data
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                      data={dispoFub.revenueAssignedByWeek.map((w) => ({
-                        week: w.weekStart.slice(5),
-                        total: w.total,
-                        count: w.count,
-                      }))}
-                      margin={CHART_MARGIN}
-                    >
-                      <CartesianGrid stroke={CHART_GRID_COLOR} vertical={false} strokeDasharray="3 3" />
-                      <XAxis dataKey="week" {...CHART_AXIS} />
-                      <YAxis {...CHART_AXIS} tickFormatter={(v) => fmtMoney(Number(v))} />
-                      <Tooltip
-                        contentStyle={CHART_TOOLTIP_STYLE}
-                        formatter={(v: any, name: string) =>
-                          name === "total" ? [fmtMoney(Number(v)), "Assigned"] : [v, "Deals"]
-                        }
-                      />
-                      <Bar {...BAR_DEFAULTS} dataKey="total" fill="hsl(var(--primary))" barSize={28} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </div>
-            </Card>
-
-            {/* Deal type mix */}
-            <Card className="col-span-12 lg:col-span-4" padding="p-5">
-              <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium">
-                Deal Type Mix
-              </div>
-              <div className="text-lg font-semibold tracking-tight mt-0.5">
-                Cash vs Buy It Now
-              </div>
-              <div className="mt-4 space-y-2">
-                {dispoFub.byDealType.length === 0 ? (
-                  <div className="text-sm text-muted-foreground">No deal type data</div>
-                ) : (
-                  dispoFub.byDealType.map((d) => {
-                    const total = dispoFub.byDealType.reduce((s, x) => s + x.count, 0) || 1;
-                    const pct = (d.count / total) * 100;
-                    return (
-                      <div key={d.dealType} className="space-y-1">
-                        <div className="flex items-center justify-between text-[13px]">
-                          <span className="font-medium">{d.dealType}</span>
-                          <span className="num text-muted-foreground">
-                            {d.count} · {pct.toFixed(0)}%
-                          </span>
-                        </div>
-                        <div className="h-2 rounded-full bg-muted overflow-hidden">
-                          <div
-                            className="h-full rounded-full bg-primary"
-                            style={{ width: `${pct}%` }}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+                  ))}
               </div>
             </Card>
           </div>
         </Section>
-      )}
-
-      {dispoFub?.error && (
-        <div className="rounded-lg border border-status-yellow/40 bg-status-yellow/5 px-4 py-2.5 text-[13px] text-muted-foreground">
-          Follow Up Boss dispo sync error: {dispoFub.error}
-        </div>
       )}
 
       {mailchimp && !mailchimp.error && mailchimp.activeSubscribers > 0 && (

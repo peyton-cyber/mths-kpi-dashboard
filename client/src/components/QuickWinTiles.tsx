@@ -22,8 +22,8 @@ export function PerRepFunnelTile() {
 
   return (
     <Section
-      title={`Per-Rep Conversion Funnel (last ${funnel.windowDays}d)`}
-      subtitle={`Calls → Appts Set → Attended → Offers → Contracts → Closings (${funnel.closingsMonth})`}
+      title={`Per-Rep Funnel — ${funnel.windowLabel}`}
+      subtitle={`Net Leads → Appts Set → Executed → Contracts → Closings (${funnel.closingsMonth}) — sheet-only (Master KPIs)`}
     >
       <Card>
         <div className="overflow-x-auto">
@@ -31,34 +31,35 @@ export function PerRepFunnelTile() {
             <thead>
               <tr className="border-b" style={{ borderColor: "hsl(var(--border))" }}>
                 <th className="text-left py-2 pl-2 pr-3 text-muted-foreground uppercase tracking-wider text-[10px]">Rep</th>
-                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Calls</th>
+                <th className="text-left py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Role</th>
+                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Net Leads</th>
                 <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Appts Set</th>
-                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Attended</th>
-                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Offers</th>
+                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Executed</th>
                 <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Contracts</th>
+                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Dropped</th>
                 <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Closings (mo)</th>
-                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Call→Appt</th>
-                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Appt→Offer</th>
-                <th className="text-right py-2 pl-2 pr-2 text-muted-foreground uppercase tracking-wider text-[10px]">Offer→Contract</th>
+                <th className="text-right py-2 px-2 text-muted-foreground uppercase tracking-wider text-[10px]">Lead→Appt</th>
+                <th className="text-right py-2 pl-2 pr-2 text-muted-foreground uppercase tracking-wider text-[10px]">Appt→Contract</th>
               </tr>
             </thead>
             <tbody>
               {funnel.reps.map(r => (
                 <tr key={r.rep} className="border-b" style={{ borderColor: "hsl(var(--border))" }} data-testid={`row-funnel-${r.rep.toLowerCase().replace(/\s/g, "-")}`}>
                   <td className="py-2 pl-2 pr-3 font-semibold">{r.rep}</td>
-                  <td className="py-2 px-2 text-right num">{r.calls}</td>
+                  <td className="py-2 px-2 text-muted-foreground">{r.role}</td>
+                  <td className="py-2 px-2 text-right num">{r.netLeads}</td>
                   <td className="py-2 px-2 text-right num">{r.apptsSet}</td>
-                  <td className="py-2 px-2 text-right num">{r.apptsAttended}</td>
-                  <td className="py-2 px-2 text-right num">{r.offers}</td>
+                  <td className="py-2 px-2 text-right num">{r.apptsExecuted}</td>
                   <td className="py-2 px-2 text-right num">{r.contracts}</td>
+                  <td className="py-2 px-2 text-right num text-muted-foreground">{r.droppedContracts}</td>
                   <td className="py-2 px-2 text-right num font-semibold">{r.closings}</td>
-                  <td className="py-2 px-2 text-right num text-muted-foreground">{pct(r.callToAppt)}</td>
-                  <td className="py-2 px-2 text-right num text-muted-foreground">{pct(r.apptToOffer)}</td>
-                  <td className="py-2 pl-2 pr-2 text-right num text-muted-foreground">{pct(r.offerToContract)}</td>
+                  <td className="py-2 px-2 text-right num text-muted-foreground">{pct(r.leadToAppt)}</td>
+                  <td className="py-2 pl-2 pr-2 text-right num text-muted-foreground">{pct(r.apptToContract)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <div className="mt-3 text-[10px] text-muted-foreground">{funnel.note}</div>
         </div>
       </Card>
     </Section>
@@ -68,11 +69,11 @@ export function PerRepFunnelTile() {
 export function DaysToCloseTile() {
   const data = useKpi();
   const dtc = data.daysToClose;
-  if (!dtc) return null;
-  const isEmpty = dtc.sampleSize === 0;
-
+  // No sample data after FUB removal — hide tile entirely.
+  // Sheet-based avg days to close is shown in the Overview "Deal Economics" card.
+  if (!dtc || dtc.sampleSize === 0) return null;
   return (
-    <Section title="Days to Close" subtitle="From FUB Under-Contract date to Rev Tracker close date">
+    <Section title="Days to Close" subtitle="Avg cycle time from contract to close">
       <Card>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Stat label="Avg Days" value={dtc.avgDays != null ? `${dtc.avgDays}d` : "—"} highlight />
@@ -81,11 +82,7 @@ export function DaysToCloseTile() {
           <Stat label="Slowest" value={dtc.slowest != null ? `${dtc.slowest}d` : "—"} />
           <Stat label="Sample" value={`${dtc.sampleSize} deals`} />
         </div>
-        <div className="mt-3 text-[10px] text-muted-foreground">
-          {isEmpty
-            ? `No matched deals yet (FUB UC found: ${dtc.fubFound}, Rev Tracker close: ${dtc.revTrackerFound}). Join keys differ — address-name normalization may need tuning.`
-            : `Matched ${dtc.matched} of ${Math.min(dtc.fubFound, dtc.revTrackerFound)} candidate deals via ${dtc.method}.`}
-        </div>
+        <div className="mt-3 text-[10px] text-muted-foreground">{dtc.method}</div>
       </Card>
     </Section>
   );
@@ -107,7 +104,7 @@ export function LeadSourceRoiTile() {
   const ls = data.leadSources;
   if (!ls || !ls.sources || ls.sources.length === 0) {
     return (
-      <Section title="Lead-Source ROI" subtitle="Cost-per-lead and CAC by channel (FUB tags + marketing spend)">
+      <Section title="Lead-Source ROI" subtitle="Cost-per-lead and CAC by channel (Marketing 2026 KPIs)">
         <Card>
           <div className="text-xs text-muted-foreground py-4 text-center">
             {ls?.error ?? "Lead-source data not available yet."}
@@ -123,7 +120,7 @@ export function LeadSourceRoiTile() {
   return (
     <Section
       title="Lead-Source ROI"
-      subtitle={`Last ${ls.windowDays}d · ${ls.totalLeads} leads · ${ls.totalContracts} contracts · ${fmtMoney(ls.totalSpend)} spend`}
+      subtitle={`${ls.windowLabel || `Last ${ls.windowDays}d`} · ${ls.totalLeads} leads · ${ls.totalContracts} contracts · ${fmtMoney(ls.totalSpend)} spend · source: Marketing 2026 KPIs`}
     >
       <Card>
         <div className="overflow-x-auto">
