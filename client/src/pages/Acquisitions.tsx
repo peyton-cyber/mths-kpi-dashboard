@@ -150,6 +150,8 @@ export default function Acquisitions() {
     { stage: "Net Leads",      value: ytd.net_leads,      goal: salesMonthly.goals.net_leads      * MONTHS.length },
     { stage: "Appts Set",      value: ytd.appts_set,      goal: salesMonthly.goals.appts_set      * MONTHS.length },
     { stage: "Appts Executed", value: ytd.appts_executed, goal: salesMonthly.goals.appts_executed * MONTHS.length },
+    { stage: "Contracts",      value: ytd.contracts ?? 0, goal: salesMonthly.goals.contracts      * MONTHS.length },
+    { stage: "Closed Deals",   value: ytd.closed_deals ?? 0, goal: 0 },
   ];
 
   const qMonths = currentQuarterMonths(MONTHS);

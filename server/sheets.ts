@@ -543,6 +543,24 @@ export async function fetchAllKpiData() {
   const _funnelMonthIdx0 = CURRENT_KPI_MONTH_IDX;
   const _funnelMonthColIdx = findFunnelColumnIdxForMonth(_funnelMonthIdx0);
   const _funnelMonthHeader = _funnelMonthColIdx >= 0 ? _funnelRawHeader[_funnelMonthColIdx] : null;
+
+  // YTD column locator — scan Row 1 for a header containing "TOTAL".
+  function findFunnelTotalColIdx(): number {
+    for (let i = 0; i < _funnelRawHeader.length; i++) {
+      if (_funnelRawHeader[i].toUpperCase().trim().includes("TOTAL")) return i;
+    }
+    return -1;
+  }
+  function funnelValueForTotal(label: string, parser: (s: string | undefined) => number | null = (s) => parseInt2(s)): number | null {
+    const colIdx = findFunnelTotalColIdx();
+    const rowIdx = findFunnelRowIdxByLabel(label);
+    if (colIdx < 0 || rowIdx < 0) return null;
+    const raw = (_funnelRaw[rowIdx] || [])[colIdx];
+    return parser(raw);
+  }
+  const _funnelTotalColIdx = findFunnelTotalColIdx();
+  const _funnelTotalHeader = _funnelTotalColIdx >= 0 ? _funnelRawHeader[_funnelTotalColIdx] : null;
+
   const funnelLookup = {
     month: MONTH_SHORT[_funnelMonthIdx0],
     monthHeader: _funnelMonthHeader,
@@ -552,8 +570,18 @@ export async function fetchAllKpiData() {
     appts_executed:  funnelValueForMonth("Appts Executed",          _funnelMonthIdx0),
     contracts:       funnelValueForMonth("Contracts",               _funnelMonthIdx0),
     closed_deals:    funnelValueForMonth("Sales Team Closed Deals", _funnelMonthIdx0),
+    ytd: {
+      totalHeader:    _funnelTotalHeader,
+      gross_leads:    funnelValueForTotal("Gross Leads"),
+      net_leads:      funnelValueForTotal("Net Leads"),
+      appts_set:      funnelValueForTotal("Appts Set"),
+      appts_executed: funnelValueForTotal("Appts Executed"),
+      contracts:      funnelValueForTotal("Contracts"),
+      closed_deals:   funnelValueForTotal("Sales Team Closed Deals"),
+    },
   };
   console.log(`[sheets] FUNNEL LOOKUP — ${funnelLookup.month} via header "${_funnelMonthHeader}" (col ${_funnelMonthColIdx}, raw rows=${_funnelRaw.length}): gross=${funnelLookup.gross_leads} net=${funnelLookup.net_leads} apptsSet=${funnelLookup.appts_set} apptsExec=${funnelLookup.appts_executed} contracts=${funnelLookup.contracts} closed=${funnelLookup.closed_deals}`);
+  console.log(`[sheets] FUNNEL LOOKUP YTD — via header "${_funnelTotalHeader}" (col ${_funnelTotalColIdx}): gross=${funnelLookup.ytd.gross_leads} net=${funnelLookup.ytd.net_leads} apptsSet=${funnelLookup.ytd.appts_set} apptsExec=${funnelLookup.ytd.appts_executed} contracts=${funnelLookup.ytd.contracts} closed=${funnelLookup.ytd.closed_deals}`);
 
   // Backfill salesMonthly with funnel-lookup values so the Acquisitions page
   // (which reads salesMonthly[<metric>][<latestMonth>]) ALWAYS gets the user's
@@ -1466,6 +1494,19 @@ export async function fetchAllKpiData() {
     // Source provenance for transparency
     _leadSource: "sales_kpis_fallback" as string,
   };
+
+  // Canonical YTD override — per user spec (Jun 25, 2026): YTD funnel values
+  // come from the TOTAL column of the Sales 2026 KPIs tab, scanning Column A
+  // (rows 1-20) for the metric label. This overrides the per-month sums above
+  // so the dashboard matches the sheet's TOTAL column exactly.
+  if (funnelLookup.ytd.gross_leads    != null) ytd.gross_leads    = funnelLookup.ytd.gross_leads;
+  if (funnelLookup.ytd.net_leads      != null) ytd.net_leads      = funnelLookup.ytd.net_leads;
+  if (funnelLookup.ytd.appts_set      != null) ytd.appts_set      = funnelLookup.ytd.appts_set;
+  if (funnelLookup.ytd.appts_executed != null) ytd.appts_executed = funnelLookup.ytd.appts_executed;
+  if (funnelLookup.ytd.contracts      != null) ytd.contracts      = funnelLookup.ytd.contracts;
+  if (funnelLookup.ytd.closed_deals   != null) ytd.closed_deals   = funnelLookup.ytd.closed_deals;
+  ytd._leadSource = "canonical_total_column";
+  console.log(`[sheets] YTD funnel overridden from canonical TOTAL column: gross=${ytd.gross_leads} net=${ytd.net_leads} apptsSet=${ytd.appts_set} apptsExec=${ytd.appts_executed} contracts=${ytd.contracts} closed=${ytd.closed_deals}`);
 
   const profitValues = Object.values(salesMonthly.profit_per_deal).filter(
     (v) => v !== null && v !== 0
