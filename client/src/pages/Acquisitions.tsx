@@ -690,20 +690,20 @@ function AqFunnelSection({ data }: { data: any }) {
   return (
     <Section
       title="Marketing → Contract Funnel"
-      subtitle="Net leads → set → executed → under contract → closed. Top is Marketing 2026 KPI net leads when available."
-      source={[SRC.marketing2026, SRC.historicDeal, SRC.revTracker]}
+      subtitle="Net leads → set → executed → contracts → closed deals. Pulled from Sales 2026 KPIs (current month column for Rolling 30, TOTAL column for YTD)."
+      source={SRC.sales2026}
     >
       <div className="grid grid-cols-12 gap-3">
         {af.rolling30d ? (
           <Card className="col-span-12 md:col-span-6" padding="p-5">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium mb-3">Rolling 30 Days</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium mb-3">Current Month</div>
             <FunnelStages stages={af.rolling30d.stages || []} />
             <div className="text-[11px] text-muted-foreground mt-3">Source: {af.rolling30d.source}</div>
           </Card>
         ) : null}
         {af.ytd ? (
           <Card className="col-span-12 md:col-span-6" padding="p-5">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium mb-3">YTD (last 365 days)</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground font-medium mb-3">YTD (TOTAL column)</div>
             <FunnelStages stages={af.ytd.stages || []} />
             <div className="text-[11px] text-muted-foreground mt-3">Source: {af.ytd.source}</div>
           </Card>

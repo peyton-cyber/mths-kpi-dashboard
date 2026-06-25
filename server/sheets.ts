@@ -3118,8 +3118,65 @@ export async function fetchAllKpiData() {
   // Feed Marketing KPI net leads (the source-of-truth per 5/20 review) as the
   // top-of-funnel count when the funnel covers the YTD window. For the rolling
   // 30d window, Marketing TOTALS is YTD so we fall back to Historic counts.
-  const aqFunnel30d = buildAqFunnel(historicRows, 30);
-  const aqFunnelYTD = buildAqFunnel(historicRows, 365, marketingTotals.net_leads || undefined);
+  let aqFunnel30d = buildAqFunnel(historicRows, 30);
+  let aqFunnelYTD = buildAqFunnel(historicRows, 365, marketingTotals.net_leads || undefined);
+
+  // CANONICAL OVERRIDE — Use funnelLookup values from Sales 2026 KPIs sheet
+  // (canonical source per user: "this is how it should be pulled everytime for the months")
+  // Rolling 30 = current-month column (e.g. JUNE), YTD = TOTAL column
+  const _buildStagesFromLookup = (
+    netLeads: number | null | undefined,
+    apptsSet: number | null | undefined,
+    apptsExec: number | null | undefined,
+    contracts: number | null | undefined,
+    closed: number | null | undefined,
+  ) => {
+    const raw = [
+      { label: "Net Leads",      value: netLeads ?? 0 },
+      { label: "Appts Set",      value: apptsSet ?? 0 },
+      { label: "Appts Executed", value: apptsExec ?? 0 },
+      { label: "Contracts",      value: contracts ?? 0 },
+      { label: "Closed Deals",   value: closed ?? 0 },
+    ];
+    return raw.map((s, i, arr) => {
+      const top = arr[0].value;
+      const prev = i > 0 ? arr[i - 1].value : null;
+      return {
+        label: s.label,
+        value: s.value,
+        fromTop: top > 0 ? Math.round((s.value / top) * 1000) / 10 : 0,
+        fromPrev: prev !== null && prev > 0 ? Math.round((s.value / prev) * 1000) / 10 : null,
+      };
+    });
+  };
+  if (funnelLookup && funnelLookup.net_leads != null) {
+    aqFunnel30d = {
+      windowDays: 30,
+      stages: _buildStagesFromLookup(
+        funnelLookup.net_leads,
+        funnelLookup.appts_set,
+        funnelLookup.appts_executed,
+        funnelLookup.contracts,
+        funnelLookup.closed_deals,
+      ),
+      source: `sales_2026_kpis_canonical (${funnelLookup.monthHeader || funnelLookup.month})`,
+    };
+    console.log(`[sheets] aqFunnel30d OVERRIDE from funnelLookup: net=${funnelLookup.net_leads} set=${funnelLookup.appts_set} exec=${funnelLookup.appts_executed} contracts=${funnelLookup.contracts} closed=${funnelLookup.closed_deals}`);
+  }
+  if (funnelLookup && funnelLookup.ytd && funnelLookup.ytd.net_leads != null) {
+    aqFunnelYTD = {
+      windowDays: 365,
+      stages: _buildStagesFromLookup(
+        funnelLookup.ytd.net_leads,
+        funnelLookup.ytd.appts_set,
+        funnelLookup.ytd.appts_executed,
+        funnelLookup.ytd.contracts,
+        funnelLookup.ytd.closed_deals,
+      ),
+      source: `sales_2026_kpis_canonical (${funnelLookup.ytd.totalHeader || "TOTAL"})`,
+    };
+    console.log(`[sheets] aqFunnelYTD OVERRIDE from funnelLookup: net=${funnelLookup.ytd.net_leads} set=${funnelLookup.ytd.appts_set} exec=${funnelLookup.ytd.appts_executed} contracts=${funnelLookup.ytd.contracts} closed=${funnelLookup.ytd.closed_deals}`);
+  }
   const dealTypeSegmentation = buildDealTypeSegmentation(historicRows, 90);
   const lmAqCombos = buildLmAqCombos(historicRows, 90);
   console.log(
