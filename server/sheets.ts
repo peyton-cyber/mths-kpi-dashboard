@@ -1495,18 +1495,11 @@ export async function fetchAllKpiData() {
     _leadSource: "sales_kpis_fallback" as string,
   };
 
-  // Canonical YTD override — per user spec (Jun 25, 2026): YTD funnel values
-  // come from the TOTAL column of the Sales 2026 KPIs tab, scanning Column A
-  // (rows 1-20) for the metric label. This overrides the per-month sums above
-  // so the dashboard matches the sheet's TOTAL column exactly.
-  if (funnelLookup.ytd.gross_leads    != null) ytd.gross_leads    = funnelLookup.ytd.gross_leads;
-  if (funnelLookup.ytd.net_leads      != null) ytd.net_leads      = funnelLookup.ytd.net_leads;
-  if (funnelLookup.ytd.appts_set      != null) ytd.appts_set      = funnelLookup.ytd.appts_set;
-  if (funnelLookup.ytd.appts_executed != null) ytd.appts_executed = funnelLookup.ytd.appts_executed;
-  if (funnelLookup.ytd.contracts      != null) ytd.contracts      = funnelLookup.ytd.contracts;
-  if (funnelLookup.ytd.closed_deals   != null) ytd.closed_deals   = funnelLookup.ytd.closed_deals;
-  ytd._leadSource = "canonical_total_column";
-  console.log(`[sheets] YTD funnel overridden from canonical TOTAL column: gross=${ytd.gross_leads} net=${ytd.net_leads} apptsSet=${ytd.appts_set} apptsExec=${ytd.appts_executed} contracts=${ytd.contracts} closed=${ytd.closed_deals}`);
+  // Initial-only YTD override (non-revenue metrics) — contracts/closed are
+  // applied here; gross/net/appts/executed are applied AFTER the marketing
+  // block below so the canonical Sales TOTAL column wins per user spec.
+  if (funnelLookup.ytd.contracts    != null) ytd.contracts    = funnelLookup.ytd.contracts;
+  if (funnelLookup.ytd.closed_deals != null) ytd.closed_deals = funnelLookup.ytd.closed_deals;
 
   const profitValues = Object.values(salesMonthly.profit_per_deal).filter(
     (v) => v !== null && v !== 0
@@ -2078,10 +2071,23 @@ export async function fetchAllKpiData() {
     ytd._leadSource = "weekly_marketing_tab";
   }
   console.log(
-    `[sheets] ytd lead source: ${ytd._leadSource}, gross=${ytd.gross_leads}, net=${ytd.net_leads} ` +
+    `[sheets] ytd lead source (pre-canonical): ${ytd._leadSource}, gross=${ytd.gross_leads}, net=${ytd.net_leads} ` +
     `(sales=${sum(salesMonthly.gross_leads)}/${sum(salesMonthly.net_leads)}, ` +
     `mktTotals=${mktTotalGross}/${mktTotalNet}, weekly=${wkTotalGross}/${wkTotalNet})`
   );
+
+  // CANONICAL YTD OVERRIDE — per user spec (Jun 25, 2026): YTD funnel values
+  // (Gross Leads, Net Leads, Appts Set, Appts Executed, Contracts, Closed Deals)
+  // come from the TOTAL column of the Sales 2026 KPIs tab. This is the team's
+  // authoritative source and overrides the Marketing 2026 KPIs totals above.
+  if (funnelLookup.ytd.gross_leads    != null) ytd.gross_leads    = funnelLookup.ytd.gross_leads;
+  if (funnelLookup.ytd.net_leads      != null) ytd.net_leads      = funnelLookup.ytd.net_leads;
+  if (funnelLookup.ytd.appts_set      != null) ytd.appts_set      = funnelLookup.ytd.appts_set;
+  if (funnelLookup.ytd.appts_executed != null) ytd.appts_executed = funnelLookup.ytd.appts_executed;
+  if (funnelLookup.ytd.contracts      != null) ytd.contracts      = funnelLookup.ytd.contracts;
+  if (funnelLookup.ytd.closed_deals   != null) ytd.closed_deals   = funnelLookup.ytd.closed_deals;
+  ytd._leadSource = "canonical_sales_total_column";
+  console.log(`[sheets] YTD funnel — CANONICAL TOTAL COLUMN: gross=${ytd.gross_leads} net=${ytd.net_leads} apptsSet=${ytd.appts_set} apptsExec=${ytd.appts_executed} contracts=${ytd.contracts} closed=${ytd.closed_deals}`);
 
   // Patch quarterly lead counts using Weekly Marketing byMonth aggregation,
   // which is the granular ground-truth split per month (Sales tab undercounts).
