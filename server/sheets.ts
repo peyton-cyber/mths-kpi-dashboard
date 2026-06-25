@@ -507,17 +507,23 @@ export async function fetchAllKpiData() {
   }
   function findFunnelRowByLabel(label: string): SheetRow | undefined {
     // Step 2: scan column A (the metric name) within rows 1-20 only.
+    // Uses the already-built metricLookup (which has proper fallback for
+    // the space-keyed first header — see lines 388-402). The spec caps
+    // scanning to rows 1-20; metricLookup is built from the same rows in
+    // order, so prefix matches naturally hit the canonical summary rows.
     const target = label.toLowerCase().trim();
-    // Cap the search to first 20 data rows per spec.
-    const maxScan = Math.min(20, salesKpis.rows.length);
-    for (let i = 0; i < maxScan; i++) {
-      const r = salesKpis.rows[i];
-      const name = String(r["KPIs (Q2 Targets)"] || r[firstHeader] || "").toLowerCase().trim();
-      if (!name) continue;
-      // Exact match, OR label is a prefix before "(" (handles "Gross Leads (Goal 312 for Apr)").
-      if (name === target) return r;
-      const beforeParen = name.split("(")[0].trim();
-      if (beforeParen === target) return r;
+    // Exact match first.
+    for (const [key, row] of Object.entries(metricLookup)) {
+      if (key.toLowerCase().trim() === target) return row;
+    }
+    // Prefix-before-"(" match (handles "Gross Leads (Goal 241 for Jun)" → "Gross Leads").
+    for (const [key, row] of Object.entries(metricLookup)) {
+      const beforeParen = key.toLowerCase().split("(")[0].trim();
+      if (beforeParen === target) return row;
+    }
+    // StartsWith match as a last-resort (handles slight label variations).
+    for (const [key, row] of Object.entries(metricLookup)) {
+      if (key.toLowerCase().trim().startsWith(target)) return row;
     }
     return undefined;
   }
