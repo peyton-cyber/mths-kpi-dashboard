@@ -492,52 +492,57 @@ export async function fetchAllKpiData() {
     "JAN", "FEB", "MAR", "APR", "MAY", "JUN",
     "JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
   ];
-  function findFunnelColumnForMonth(monthIdx0: number): string | null {
+  // Fetch raw 2D values for Sales 2026 KPIs so we can read column A directly.
+  // The standard read-rows path drops column A because its header is a single
+  // space " " — the metric labels never make it into the row objects.
+  const _funnelRaw = await fetchSheetRaw(MASTER_KPIS, "Sales 2026 KPIs");
+  const _funnelRawHeader: string[] = (_funnelRaw[0] || []).map((h) => String(h || ""));
+  function findFunnelColumnIdxForMonth(monthIdx0: number): number {
     const long = _funnelMonthNamesLong[monthIdx0];
     const short = _funnelMonthShort[monthIdx0];
-    // Step 1: scan headers (row 1) for a column whose header CONTAINS the month token.
-    for (const h of salesHeaders) {
-      const u = String(h || "").toUpperCase().trim();
+    for (let i = 0; i < _funnelRawHeader.length; i++) {
+      const u = _funnelRawHeader[i].toUpperCase().trim();
       if (!u) continue;
       if (u.includes(long) || u === short || u.startsWith(short + " ") || u.startsWith(short + "(")) {
-        return h;
+        return i;
       }
     }
-    return null;
+    return -1;
   }
-  function findFunnelRowByLabel(label: string): SheetRow | undefined {
-    // Step 2: scan column A (the metric name) within rows 1-20 only.
-    // Uses the already-built metricLookup (which has proper fallback for
-    // the space-keyed first header — see lines 388-402). The spec caps
-    // scanning to rows 1-20; metricLookup is built from the same rows in
-    // order, so prefix matches naturally hit the canonical summary rows.
+  function findFunnelRowIdxByLabel(label: string): number {
     const target = label.toLowerCase().trim();
-    // Exact match first.
-    for (const [key, row] of Object.entries(metricLookup)) {
-      if (key.toLowerCase().trim() === target) return row;
+    const maxScan = Math.min(20, _funnelRaw.length);
+    // 1) exact match on column A
+    for (let i = 1; i < maxScan; i++) {
+      const name = String((_funnelRaw[i] || [])[0] || "").toLowerCase().trim();
+      if (name === target) return i;
     }
-    // Prefix-before-"(" match (handles "Gross Leads (Goal 241 for Jun)" → "Gross Leads").
-    for (const [key, row] of Object.entries(metricLookup)) {
-      const beforeParen = key.toLowerCase().split("(")[0].trim();
-      if (beforeParen === target) return row;
+    // 2) prefix-before-"(" match
+    for (let i = 1; i < maxScan; i++) {
+      const name = String((_funnelRaw[i] || [])[0] || "").toLowerCase().trim();
+      if (!name) continue;
+      const beforeParen = name.split("(")[0].trim();
+      if (beforeParen === target) return i;
     }
-    // StartsWith match as a last-resort (handles slight label variations).
-    for (const [key, row] of Object.entries(metricLookup)) {
-      if (key.toLowerCase().trim().startsWith(target)) return row;
+    // 3) startsWith match
+    for (let i = 1; i < maxScan; i++) {
+      const name = String((_funnelRaw[i] || [])[0] || "").toLowerCase().trim();
+      if (name && name.startsWith(target)) return i;
     }
-    return undefined;
+    return -1;
   }
   function funnelValueForMonth(label: string, monthIdx0: number, parser: (s: string | undefined) => number | null = (s) => parseInt2(s)): number | null {
-    const col = findFunnelColumnForMonth(monthIdx0);
-    if (!col) return null;
-    const row = findFunnelRowByLabel(label);
-    if (!row) return null;
-    return parser(row[col]);
+    const colIdx = findFunnelColumnIdxForMonth(monthIdx0);
+    const rowIdx = findFunnelRowIdxByLabel(label);
+    if (colIdx < 0 || rowIdx < 0) return null;
+    const raw = (_funnelRaw[rowIdx] || [])[colIdx];
+    return parser(raw);
   }
 
   // Build the canonical funnel for the CURRENT KPI month, using the rules above.
   const _funnelMonthIdx0 = CURRENT_KPI_MONTH_IDX;
-  const _funnelMonthHeader = findFunnelColumnForMonth(_funnelMonthIdx0);
+  const _funnelMonthColIdx = findFunnelColumnIdxForMonth(_funnelMonthIdx0);
+  const _funnelMonthHeader = _funnelMonthColIdx >= 0 ? _funnelRawHeader[_funnelMonthColIdx] : null;
   const funnelLookup = {
     month: MONTH_SHORT[_funnelMonthIdx0],
     monthHeader: _funnelMonthHeader,
@@ -548,7 +553,7 @@ export async function fetchAllKpiData() {
     contracts:       funnelValueForMonth("Contracts",               _funnelMonthIdx0),
     closed_deals:    funnelValueForMonth("Sales Team Closed Deals", _funnelMonthIdx0),
   };
-  console.log(`[sheets] FUNNEL LOOKUP — ${funnelLookup.month} via header "${_funnelMonthHeader}": gross=${funnelLookup.gross_leads} net=${funnelLookup.net_leads} apptsSet=${funnelLookup.appts_set} apptsExec=${funnelLookup.appts_executed} contracts=${funnelLookup.contracts} closed=${funnelLookup.closed_deals}`);
+  console.log(`[sheets] FUNNEL LOOKUP — ${funnelLookup.month} via header "${_funnelMonthHeader}" (col ${_funnelMonthColIdx}, raw rows=${_funnelRaw.length}): gross=${funnelLookup.gross_leads} net=${funnelLookup.net_leads} apptsSet=${funnelLookup.appts_set} apptsExec=${funnelLookup.appts_executed} contracts=${funnelLookup.contracts} closed=${funnelLookup.closed_deals}`);
 
   // Backfill salesMonthly with funnel-lookup values so the Acquisitions page
   // (which reads salesMonthly[<metric>][<latestMonth>]) ALWAYS gets the user's
