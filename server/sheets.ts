@@ -1327,6 +1327,16 @@ export async function fetchAllKpiData() {
   }
   console.log(`[sheets] Phase 8: Rev Tracker drives salesMonthly.revenue (FUNDED). activeMonths capped at idx ${_currentMonthIdx0} (${MONTH_SHORT[_currentMonthIdx0]}): [${activeMonths.join(", ")}]`);
 
+  // Re-apply canonical funnel-lookup closed_deals for the CURRENT KPI month.
+  // Per spec (Jun 25, 2026): only count rows the team has marked green (fully
+  // closed & funded) — the Sales 2026 KPIs "Sales Team Closed Deals" row is
+  // the authoritative tally. Phase 8 above derives closed_deals from the Rev
+  // Tracker close-date column which can include not-yet-funded rows.
+  if (funnelLookup.closed_deals != null) {
+    salesMonthly.closed_deals[funnelLookup.month] = funnelLookup.closed_deals;
+    console.log(`[sheets] Re-applied canonical closed_deals for ${funnelLookup.month}: ${funnelLookup.closed_deals} (overriding Rev Tracker count)`);
+  }
+
   // ================================================================
   // SHEET-EXACT OVERRIDE — use Rev Tracker summary rows verbatim
   // ----------------------------------------------------------------
