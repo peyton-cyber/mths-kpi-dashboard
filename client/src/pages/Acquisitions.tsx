@@ -745,12 +745,13 @@ function FunnelStages({ stages }: { stages: Array<{ label: string; value: number
 }
 
 function DealTypeSegmentationSection({ data }: { data: any }) {
-  const ds = data.dealTypeSegmentation as { windowDays: number; breakdown: any[]; totals: any } | undefined;
+  const ds = data.dealTypeSegmentation as { windowDays: number; breakdown: any[]; totals: any; windowLabel?: string; source?: string } | undefined;
   if (!ds || !ds.breakdown?.length) return null;
+  const windowText = ds.windowLabel ? ds.windowLabel : `Last ${ds.windowDays} days closed`;
   return (
     <Section
       title="Deal Type Segmentation"
-      subtitle={`Last ${ds.windowDays} days closed • ${ds.totals.count} deals • ${fmtMoney(ds.totals.profit)} profit`}
+      subtitle={`${windowText} • ${ds.totals.count} deals • ${fmtMoney(ds.totals.profit)} profit`}
       source={SRC.revTracker}
     >
       <Card padding="p-0">

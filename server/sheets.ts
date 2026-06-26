@@ -3177,7 +3177,96 @@ export async function fetchAllKpiData() {
     };
     console.log(`[sheets] aqFunnelYTD OVERRIDE from funnelLookup: net=${funnelLookup.ytd.net_leads} set=${funnelLookup.ytd.appts_set} exec=${funnelLookup.ytd.appts_executed} contracts=${funnelLookup.ytd.contracts} closed=${funnelLookup.ytd.closed_deals}`);
   }
-  const dealTypeSegmentation = buildDealTypeSegmentation(historicRows, 90);
+  let dealTypeSegmentation = buildDealTypeSegmentation(historicRows, 90);
+
+  // CANONICAL OVERRIDE — Deal Type Segmentation from 2026 Revenue Tracker
+  // Spec: rolling last 3 months (April, May, June for current window).
+  // Filter Column B (Close Date) for month-name match, then categorize Column C:
+  //   Cash             — plain street, no parentheses
+  //   Novation         — contains "(Novation)" (case-insensitive)
+  //   Subject-to       — contains "(EPP)"
+  //   Listing referral — contains "(listing referral)"
+  // Aggregate: COUNT rows, SUM Column D (Gross), SUM Column G (Profit/Commission Revenue)
+  try {
+    const revRaw = await fetchSheetRaw(COMPANY_FINANCIALS, "2026 Revenue Tracker");
+    if (revRaw && Array.isArray(revRaw) && revRaw.length > 1) {
+      // Determine which 3 months count as "current window":
+      // Use the prior 3 full months relative to today, including the current month.
+      // Per spec on 6/26: April, May, June.
+      const now = new Date();
+      const windowMonthIdxs: number[] = [
+        (now.getMonth() - 2 + 12) % 12,
+        (now.getMonth() - 1 + 12) % 12,
+        now.getMonth(),
+      ];
+      const windowMonths = windowMonthIdxs.map((i) => MONTH_FULL[i].toLowerCase());
+      // Categories
+      const cats: Record<string, { count: number; gross: number; profit: number }> = {
+        Cash:             { count: 0, gross: 0, profit: 0 },
+        Novation:         { count: 0, gross: 0, profit: 0 },
+        "Subject-to":     { count: 0, gross: 0, profit: 0 },
+        "Listing referral": { count: 0, gross: 0, profit: 0 },
+      };
+      const moneyParse = (s: any): number => {
+        if (typeof s === "number") return s;
+        if (!s) return 0;
+        const str = String(s).replace(/[,$\s]/g, "").replace(/\((.*)\)/, "-$1");
+        const n = parseFloat(str);
+        return isNaN(n) ? 0 : n;
+      };
+      let skipped: string[] = [];
+      for (let i = 1; i < revRaw.length; i++) {
+        const row = revRaw[i] || [];
+        const closeDate = String(row[1] || "").trim().toLowerCase();
+        if (!closeDate) continue;
+        // Match only when the close-date cell begins with one of our window months
+        // (avoids matching aggregate rows like "April Actual" — those live in column C).
+        const inWindow = windowMonths.some((m) => closeDate.startsWith(m) || closeDate.startsWith("feburary") && m === "february");
+        if (!inWindow) continue;
+        const deal = String(row[2] || "").trim();
+        if (!deal) continue;
+        const dlow = deal.toLowerCase();
+        const gross = moneyParse(row[3]);
+        const profit = moneyParse(row[6]);
+        let cat: string | null = null;
+        if (dlow.includes("(novation)")) cat = "Novation";
+        else if (dlow.includes("(epp)")) cat = "Subject-to";
+        else if (dlow.includes("(listing referral)")) cat = "Listing referral";
+        else if (!/\([^)]*\)/.test(deal)) cat = "Cash";
+        else { skipped.push(`${row[1]} | ${deal}`); continue; }
+        cats[cat].count += 1;
+        cats[cat].gross += gross;
+        cats[cat].profit += profit;
+      }
+      const breakdown = Object.entries(cats).map(([dealType, v]) => ({
+        dealType,
+        count: v.count,
+        totalGross: Math.round(v.gross),
+        totalProfit: Math.round(v.profit),
+        avgProfit: v.count > 0 ? Math.round(v.profit / v.count) : 0,
+      })).sort((a, b) => b.totalProfit - a.totalProfit);
+      const totals = breakdown.reduce(
+        (acc, b) => ({ count: acc.count + b.count, gross: acc.gross + b.totalGross, profit: acc.profit + b.totalProfit }),
+        { count: 0, gross: 0, profit: 0 },
+      );
+      const windowLabel = windowMonthIdxs.map((i) => MONTH_FULL[i]).join(" / ");
+      dealTypeSegmentation = {
+        windowDays: 90,
+        breakdown,
+        totals,
+        // @ts-ignore — extra metadata for UI
+        source: `2026_revenue_tracker_canonical (${windowLabel})`,
+        // @ts-ignore
+        windowLabel,
+      } as any;
+      console.log(`[sheets] dealTypeSegmentation OVERRIDE from 2026 Revenue Tracker (${windowLabel}): ` +
+        breakdown.map(b => `${b.dealType}=${b.count}/$${b.totalGross}/$${b.totalProfit}`).join(", ") +
+        (skipped.length ? ` | skipped ${skipped.length} parenthetical rows (JV/Flip/rental/etc.)` : ""));
+    }
+  } catch (e: any) {
+    console.warn(`[sheets] dealTypeSegmentation canonical override failed:`, e?.message || e);
+  }
+
   const lmAqCombos = buildLmAqCombos(historicRows, 90);
   console.log(
     `[sheets] Phase 2 analytics: ${currentDeals.activeDeals.length} open deals ` +
