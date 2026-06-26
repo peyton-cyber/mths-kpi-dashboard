@@ -1599,51 +1599,6 @@ export async function fetchAllKpiData() {
   }
 
   const leadManagers: Record<string, LeadManagerData> = {};
-  let currentLM: string | null = null;
-
-  for (const row of salesKpis.rows) {
-    // Use dynamic firstHeader so we tolerate header drift (e.g. " " vs "KPIs (Q2 Targets)").
-    // The Google Sheets client now also exposes column-0 under "__col0__" when the
-    // sheet's column-A header is blank or whitespace.
-    const metric = (row["KPIs (Q2 Targets)"] || row[firstHeader] || row["__col0__"] || "").trim();
-
-    if (metric.startsWith("Lead Manager -")) {
-      const name = metric.replace("Lead Manager -", "").trim();
-      if (name) {
-        currentLM = name;
-        leadManagers[name] = {
-          net_leads: {}, appts_set: {}, ratio: {}, contracted: {}, conversion: {},
-        };
-      }
-      continue;
-    }
-
-    // Reset context when we hit AQ Agent section
-    if (metric.startsWith("AQ Agent -")) { currentLM = null; continue; }
-
-    if (currentLM && leadManagers[currentLM]) {
-      const lm = leadManagers[currentLM];
-      // The data here uses the WEEKLY column layout but the JUN and NOV columns
-      // contain monthly totals ("Jan Totals", "Feb Totals")
-      // For proper monthly totals, use the JUN column for Jan total, NOV for Feb total
-      // But actually the individual week columns map to the calendar months
-      // Let's parse the total columns: JUN = "Jan Totals", NOV = "Feb Totals"
-      // And DEC column for March data
-
-      for (let i = 0; i < SALES_MONTH_COLS.length; i++) {
-        const col = SALES_MONTH_COLS[i];
-        const val = row[col] || "";
-        const mk = MONTH_SHORT[i];
-        if (!val.trim() || val.includes("Totals") || val.includes("Week")) continue;
-
-        if (metric === "Net Leads Assigned") lm.net_leads[mk] = parseInt2(val);
-        else if (metric === "Appts Set") lm.appts_set[mk] = parseInt2(val);
-        else if (metric === "Net Lead/Appt Set Ratio") lm.ratio[mk] = parsePct(val);
-        else if (metric === "Contracted Appts") lm.contracted[mk] = parseInt2(val);
-        else if (metric === "Conversion Rate") lm.conversion[mk] = parsePct(val);
-      }
-    }
-  }
 
   // ================================================================
   // 4. AQ AGENTS — Per-person monthly data from Sales KPIs
@@ -1656,43 +1611,106 @@ export async function fetchAllKpiData() {
   }
 
   const aqAgents: Record<string, AqAgentData> = {};
-  let currentAQ: string | null = null;
 
-  for (const row of salesKpis.rows) {
-    // Use dynamic firstHeader so we tolerate header drift (e.g. " " vs "KPIs (Q2 Targets)").
-    // The Google Sheets client now also exposes column-0 under "__col0__" when the
-    // sheet's column-A header is blank or whitespace.
-    const metric = (row["KPIs (Q2 Targets)"] || row[firstHeader] || row["__col0__"] || "").trim();
+  // ================================================================
+  // CANONICAL PER-REP PARSER (uses raw 2D data + dynamic "X Totals" cols)
+  // ----------------------------------------------------------------
+  // The Lead Manager / AQ Agent grids use a WEEKLY column layout with a
+  // "<Month> Totals" column at the end of each month's week block. The
+  // monthly-summary table at the top of the sheet uses different columns,
+  // so we must locate the totals columns from the per-rep header rows.
+  //
+  // Strategy: scan _funnelRaw (the raw 2D sheet) and for every cell that
+  // matches "<Month> Totals" build a mapping from column-index → month-key.
+  // Then for every row whose column-0 starts with "Lead Manager -" or
+  // "AQ Agent -", read the following rows (Net Leads Assigned / Appts Set /
+  // etc.) at those totals columns.
+  // ================================================================
+  const _perRepTotalsColByMonth: Record<string, number> = {};
+  for (let r = 0; r < _funnelRaw.length; r++) {
+    const row = _funnelRaw[r] || [];
+    for (let c = 0; c < row.length; c++) {
+      const cell = String(row[c] || "").trim().toLowerCase();
+      if (!cell.endsWith(" totals")) continue;
+      const monthWord = cell.replace(/ totals$/, "").trim();
+      // Map to canonical short month
+      for (let mi = 0; mi < MONTH_FULL.length; mi++) {
+        const full = MONTH_FULL[mi].toLowerCase();
+        const short = MONTH_SHORT[mi].toLowerCase();
+        if (monthWord === full || monthWord === short ||
+            monthWord.startsWith(full) || monthWord.startsWith(short)) {
+          // Prefer LATEST encounter so we use the per-rep grid (which appears
+          // after the monthly summary table). The summary table doesn't have
+          // "X Totals" labels in its column headers, but if any are present
+          // the per-rep grid below will overwrite them.
+          _perRepTotalsColByMonth[MONTH_SHORT[mi]] = c;
+          break;
+        }
+      }
+    }
+  }
+  console.log(`[sheets] Per-rep totals columns: ${JSON.stringify(_perRepTotalsColByMonth)}`);
 
-    if (metric.startsWith("AQ Agent -")) {
-      const name = metric.replace("AQ Agent -", "").trim();
-      if (name) {
-        currentAQ = name;
-        aqAgents[name] = {
+  // Now scan _funnelRaw for "Lead Manager -" and "AQ Agent -" section headers
+  // and pull each metric's totals from the resolved month columns.
+  let _currentRepName: string | null = null;
+  let _currentRepRole: "LM" | "AQ" | null = null;
+  for (let r = 0; r < _funnelRaw.length; r++) {
+    const row = _funnelRaw[r] || [];
+    const label = String(row[0] || "").trim();
+    if (!label) continue;
+
+    if (label.startsWith("Lead Manager -")) {
+      _currentRepName = label.replace("Lead Manager -", "").trim();
+      _currentRepRole = "LM";
+      if (_currentRepName && !leadManagers[_currentRepName]) {
+        leadManagers[_currentRepName] = {
+          net_leads: {}, appts_set: {}, ratio: {}, contracted: {}, conversion: {},
+        };
+      }
+      continue;
+    }
+    if (label.startsWith("AQ Agent -")) {
+      _currentRepName = label.replace("AQ Agent -", "").trim();
+      _currentRepRole = "AQ";
+      if (_currentRepName && !aqAgents[_currentRepName]) {
+        aqAgents[_currentRepName] = {
           appts_executed: {}, contracts: {}, conversion: {}, dropped_contracts: {},
         };
       }
       continue;
     }
 
-    if (metric.startsWith("Lead Manager -")) { currentAQ = null; continue; }
+    if (!_currentRepName || !_currentRepRole) continue;
 
-    if (currentAQ && aqAgents[currentAQ]) {
-      const aq = aqAgents[currentAQ];
-      for (let i = 0; i < SALES_MONTH_COLS.length; i++) {
-        const col = SALES_MONTH_COLS[i];
-        const val = row[col] || "";
-        const mk = MONTH_SHORT[i];
-        if (!val.trim() || val.includes("Totals") || val.includes("Week") ||
-            val.includes("Flex") || val === "A" || val === "B" || val.includes("Fill in")) continue;
+    // Read each metric value from the resolved totals column for each month
+    for (const [mk, colIdx] of Object.entries(_perRepTotalsColByMonth)) {
+      const raw = String(row[colIdx] || "").trim();
+      if (!raw) continue;
+      // Skip non-numeric / placeholder values
+      if (raw.includes("Totals") || raw.includes("Week") ||
+          raw === "A" || raw === "B" || raw === "Flex" || raw.includes("Fill in") ||
+          raw === "-" || raw === "#DIV/0!") continue;
 
-        if (metric === "Appts Executed") aq.appts_executed[mk] = parseInt2(val);
-        else if (metric === "Contracts") aq.contracts[mk] = parseInt2(val);
-        else if (metric === "Conversion Rate") aq.conversion[mk] = parsePct(val);
-        else if (metric === "Dropped Contracts") aq.dropped_contracts[mk] = parseInt2(val);
+      if (_currentRepRole === "LM") {
+        const lm = leadManagers[_currentRepName!];
+        if (!lm) continue;
+        if (label === "Net Leads Assigned") lm.net_leads[mk] = parseInt2(raw);
+        else if (label === "Appts Set") lm.appts_set[mk] = parseInt2(raw);
+        else if (label === "Net Lead/Appt Set Ratio") lm.ratio[mk] = parsePct(raw);
+        else if (label === "Contracted Appts") lm.contracted[mk] = parseInt2(raw);
+        else if (label === "Conversion Rate") lm.conversion[mk] = parsePct(raw);
+      } else {
+        const aq = aqAgents[_currentRepName!];
+        if (!aq) continue;
+        if (label === "Appts Executed") aq.appts_executed[mk] = parseInt2(raw);
+        else if (label === "Contracts") aq.contracts[mk] = parseInt2(raw);
+        else if (label === "Conversion Rate") aq.conversion[mk] = parsePct(raw);
+        else if (label === "Dropped Contracts") aq.dropped_contracts[mk] = parseInt2(raw);
       }
     }
   }
+  console.log(`[sheets] Per-rep parsed: ${Object.keys(leadManagers).length} LMs (${Object.keys(leadManagers).join(", ")}), ${Object.keys(aqAgents).length} AQs (${Object.keys(aqAgents).join(", ")})`);
 
   // ================================================================
   // 4a. PER-REP FUNNEL — backfill from sheet-only per-rep data.
