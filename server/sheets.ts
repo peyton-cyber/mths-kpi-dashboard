@@ -3179,27 +3179,49 @@ export async function fetchAllKpiData() {
   }
   let dealTypeSegmentation = buildDealTypeSegmentation(historicRows, 90);
 
-  // CANONICAL OVERRIDE — Deal Type Segmentation from 2026 Revenue Tracker
-  // Spec: rolling last 3 months (April, May, June for current window).
-  // Filter Column B (Close Date) for month-name match, then categorize Column C:
+  // CANONICAL OVERRIDE — Deal Type Segmentation from <YEAR> Revenue Tracker
+  // Auto-rolls month-by-month and year-by-year. No code changes needed at month/year rollover.
+  //
+  // Spec: rolling 3 months (current month + 2 prior). Today=6/26 → April / May / June.
+  // Filter Column B (Close Date) for month-name match (case-insensitive, typo-tolerant
+  // for known sheet typos like "Feburary"). Then categorize Column C:
   //   Cash             — plain street, no parentheses
   //   Novation         — contains "(Novation)" (case-insensitive)
   //   Subject-to       — contains "(EPP)"
   //   Listing referral — contains "(listing referral)"
   // Aggregate: COUNT rows, SUM Column D (Gross), SUM Column G (Profit/Commission Revenue)
   try {
-    const revRaw = await fetchSheetRaw(COMPANY_FINANCIALS, "2026 Revenue Tracker");
+    // Sheet name auto-rolls each calendar year. Falls back to last year's sheet for
+    // the Jan/Feb rollover window when this year's sheet doesn't exist yet.
+    const _now = new Date();
+    const _curYear = _now.getFullYear();
+    const _curMonth = _now.getMonth(); // 0..11
+    const _trackerCandidates = [`${_curYear} Revenue Tracker`, `${_curYear - 1} Revenue Tracker`];
+    let revRaw: any = null;
+    let revTrackerSheetName = _trackerCandidates[0];
+    for (const name of _trackerCandidates) {
+      try {
+        const r = await fetchSheetRaw(COMPANY_FINANCIALS, name);
+        if (r && Array.isArray(r) && r.length > 1) {
+          revRaw = r;
+          revTrackerSheetName = name;
+          break;
+        }
+      } catch (_) { /* try next */ }
+    }
     if (revRaw && Array.isArray(revRaw) && revRaw.length > 1) {
-      // Determine which 3 months count as "current window":
-      // Use the prior 3 full months relative to today, including the current month.
-      // Per spec on 6/26: April, May, June.
-      const now = new Date();
-      const windowMonthIdxs: number[] = [
-        (now.getMonth() - 2 + 12) % 12,
-        (now.getMonth() - 1 + 12) % 12,
-        now.getMonth(),
-      ];
-      const windowMonths = windowMonthIdxs.map((i) => MONTH_FULL[i].toLowerCase());
+      // Compute the 3-month window. Each window entry includes a YEAR so we don't
+      // accidentally include prior-year data when the window crosses Jan 1.
+      type WinMonth = { idx: number; year: number; name: string };
+      const window3: WinMonth[] = [];
+      for (let k = 2; k >= 0; k--) {
+        const target = new Date(_curYear, _curMonth - k, 1);
+        window3.push({
+          idx: target.getMonth(),
+          year: target.getFullYear(),
+          name: MONTH_FULL[target.getMonth()],
+        });
+      }
       // Categories
       const cats: Record<string, { count: number; gross: number; profit: number }> = {
         Cash:             { count: 0, gross: 0, profit: 0 },
@@ -3214,17 +3236,48 @@ export async function fetchAllKpiData() {
         const n = parseFloat(str);
         return isNaN(n) ? 0 : n;
       };
-      let skipped: string[] = [];
+      // Known typos / variant spellings seen in the sheet. Map each → canonical lowercase month.
+      const MONTH_VARIANTS: Array<{ test: RegExp; monthIdx: number }> = [
+        { test: /^jan/i,                  monthIdx: 0 },
+        { test: /^feb/i,                  monthIdx: 1 }, // catches "february" and "feburary"
+        { test: /^mar/i,                  monthIdx: 2 },
+        { test: /^apr/i,                  monthIdx: 3 },
+        { test: /^may\b/i,                monthIdx: 4 }, // \b avoids matching e.g. "mayor"
+        { test: /^jun/i,                  monthIdx: 5 },
+        { test: /^jul/i,                  monthIdx: 6 },
+        { test: /^aug/i,                  monthIdx: 7 },
+        { test: /^sep/i,                  monthIdx: 8 },
+        { test: /^oct/i,                  monthIdx: 9 },
+        { test: /^nov/i,                  monthIdx: 10 },
+        { test: /^dec/i,                  monthIdx: 11 },
+      ];
+      const detectMonth = (s: string): number | null => {
+        const t = s.trim();
+        for (const m of MONTH_VARIANTS) if (m.test.test(t)) return m.monthIdx;
+        return null;
+      };
+      // Which months are in the window? (idx → year)
+      const allowedMonthIdxs = new Set(window3.map(w => w.idx));
+      // The Rev Tracker sheet contains a single fiscal year per tab, so if the
+      // current loaded sheet matches the current year we accept all 3 months;
+      // but if part of the window falls outside that fiscal year, those rows
+      // legitimately aren't present in this tab anyway — so we don't need cross-tab logic.
+      const skipped: string[] = [];
+      let matched = 0;
       for (let i = 1; i < revRaw.length; i++) {
         const row = revRaw[i] || [];
-        const closeDate = String(row[1] || "").trim().toLowerCase();
-        if (!closeDate) continue;
-        // Match only when the close-date cell begins with one of our window months
-        // (avoids matching aggregate rows like "April Actual" — those live in column C).
-        const inWindow = windowMonths.some((m) => closeDate.startsWith(m) || closeDate.startsWith("feburary") && m === "february");
-        if (!inWindow) continue;
+        const closeDateCell = String(row[1] || "").trim();
+        if (!closeDateCell) continue;
+        // Skip aggregate / TBD rows (e.g. blank close date or non-month text)
+        const detectedMonth = detectMonth(closeDateCell);
+        if (detectedMonth == null) continue;
+        if (!allowedMonthIdxs.has(detectedMonth)) continue;
         const deal = String(row[2] || "").trim();
         if (!deal) continue;
+        // Skip rows that are aggregate labels in column C (defensive — the
+        // "April Actual" / "May Actual" rows have empty column B so they're
+        // already filtered, but guard anyway).
+        if (/\b(actual|total rev|commission|roas)\b/i.test(deal)) continue;
         const dlow = deal.toLowerCase();
         const gross = moneyParse(row[3]);
         const profit = moneyParse(row[6]);
@@ -3233,10 +3286,11 @@ export async function fetchAllKpiData() {
         else if (dlow.includes("(epp)")) cat = "Subject-to";
         else if (dlow.includes("(listing referral)")) cat = "Listing referral";
         else if (!/\([^)]*\)/.test(deal)) cat = "Cash";
-        else { skipped.push(`${row[1]} | ${deal}`); continue; }
+        else { skipped.push(`${closeDateCell} | ${deal}`); continue; }
         cats[cat].count += 1;
         cats[cat].gross += gross;
         cats[cat].profit += profit;
+        matched += 1;
       }
       const breakdown = Object.entries(cats).map(([dealType, v]) => ({
         dealType,
@@ -3249,19 +3303,24 @@ export async function fetchAllKpiData() {
         (acc, b) => ({ count: acc.count + b.count, gross: acc.gross + b.totalGross, profit: acc.profit + b.totalProfit }),
         { count: 0, gross: 0, profit: 0 },
       );
-      const windowLabel = windowMonthIdxs.map((i) => MONTH_FULL[i]).join(" / ");
+      const windowLabel = window3.map(w => w.name).join(" / ");
       dealTypeSegmentation = {
         windowDays: 90,
         breakdown,
         totals,
         // @ts-ignore — extra metadata for UI
-        source: `2026_revenue_tracker_canonical (${windowLabel})`,
+        source: `${revTrackerSheetName.toLowerCase().replace(/\s+/g, "_")}_canonical (${windowLabel})`,
         // @ts-ignore
         windowLabel,
+        // @ts-ignore
+        sheetSource: revTrackerSheetName,
       } as any;
-      console.log(`[sheets] dealTypeSegmentation OVERRIDE from 2026 Revenue Tracker (${windowLabel}): ` +
+      console.log(`[sheets] dealTypeSegmentation OVERRIDE from ${revTrackerSheetName} (${windowLabel}): ` +
         breakdown.map(b => `${b.dealType}=${b.count}/$${b.totalGross}/$${b.totalProfit}`).join(", ") +
-        (skipped.length ? ` | skipped ${skipped.length} parenthetical rows (JV/Flip/rental/etc.)` : ""));
+        ` | matched ${matched} rows` +
+        (skipped.length ? `, skipped ${skipped.length} parenthetical rows (JV/Flip/rental/etc.)` : ""));
+    } else {
+      console.warn(`[sheets] dealTypeSegmentation: could not load any Revenue Tracker sheet (tried ${_trackerCandidates.join(", ")}). Keeping fallback.`);
     }
   } catch (e: any) {
     console.warn(`[sheets] dealTypeSegmentation canonical override failed:`, e?.message || e);
