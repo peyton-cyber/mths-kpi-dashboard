@@ -1731,6 +1731,7 @@ export async function fetchAllKpiData() {
     "Brandon":          { canonical: "Brandon",  role: "LM" },
     "Jeff Henry":       { canonical: "Jeff H",   role: "LM" },
     "Jeff H":           { canonical: "Jeff H",   role: "LM" },
+    "Jeff":             { canonical: "Jeff H",   role: "LM" },
     "Johnathan":        { canonical: "Jonathan", role: "LM" },
     "Jonathan":         { canonical: "Jonathan", role: "LM" },
     "Jonathan Medlin":  { canonical: "Jonathan", role: "LM" },
