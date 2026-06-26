@@ -1602,8 +1602,10 @@ export async function fetchAllKpiData() {
   let currentLM: string | null = null;
 
   for (const row of salesKpis.rows) {
-    // Use dynamic firstHeader so we tolerate header drift (e.g. " " vs "KPIs (Q2 Targets)")
-    const metric = (row["KPIs (Q2 Targets)"] || row[firstHeader] || "").trim();
+    // Use dynamic firstHeader so we tolerate header drift (e.g. " " vs "KPIs (Q2 Targets)").
+    // The Google Sheets client now also exposes column-0 under "__col0__" when the
+    // sheet's column-A header is blank or whitespace.
+    const metric = (row["KPIs (Q2 Targets)"] || row[firstHeader] || row["__col0__"] || "").trim();
 
     if (metric.startsWith("Lead Manager -")) {
       const name = metric.replace("Lead Manager -", "").trim();
@@ -1657,8 +1659,10 @@ export async function fetchAllKpiData() {
   let currentAQ: string | null = null;
 
   for (const row of salesKpis.rows) {
-    // Use dynamic firstHeader so we tolerate header drift (e.g. " " vs "KPIs (Q2 Targets)")
-    const metric = (row["KPIs (Q2 Targets)"] || row[firstHeader] || "").trim();
+    // Use dynamic firstHeader so we tolerate header drift (e.g. " " vs "KPIs (Q2 Targets)").
+    // The Google Sheets client now also exposes column-0 under "__col0__" when the
+    // sheet's column-A header is blank or whitespace.
+    const metric = (row["KPIs (Q2 Targets)"] || row[firstHeader] || row["__col0__"] || "").trim();
 
     if (metric.startsWith("AQ Agent -")) {
       const name = metric.replace("AQ Agent -", "").trim();

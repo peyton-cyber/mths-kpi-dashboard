@@ -103,16 +103,31 @@ async function fetchSingleSheet(
     return { headers: [], rows: [], rowCount: 0, _empty: true };
   }
 
-  const headers = (values[0] || []).map((h) => String(h ?? "").trim());
+  // CRITICAL: preserve column-0 even if its header cell is empty or a single
+  // space. Some MTHS sheets (Sales 2026 KPIs) use " " as the header for the
+  // metric-label column, and dropping it loses every Lead Manager / AQ Agent
+  // section header.
+  const rawHeaders = (values[0] || []).map((h) => String(h ?? ""));
+  const headers = rawHeaders.map((h) => h.trim());
+  // For row keying, fill any blank-after-trim header with a stable placeholder
+  // so the data still gets attached to the row object. Downstream parsers can
+  // read via row[firstHeader] (which uses the same trimmed value) and now
+  // additionally via the placeholder key.
+  const rowKeys = headers.map((h, idx) => h || `__col${idx}__`);
   const rows: SheetRow[] = [];
   for (let i = 1; i < values.length; i++) {
     const row = values[i] || [];
     const obj: SheetRow = { _rowNumber: String(i + 1) };
-    for (let j = 0; j < headers.length; j++) {
-      const key = headers[j];
-      if (!key) continue;
+    for (let j = 0; j < rowKeys.length; j++) {
+      const key = rowKeys[j];
       // Cell may be undefined when shorter than the header row
-      obj[key] = row[j] != null ? String(row[j]) : "";
+      const val = row[j] != null ? String(row[j]) : "";
+      obj[key] = val;
+      // Also bind to the trimmed-header key (may be empty string) so existing
+      // lookups via row[firstHeader] (where firstHeader = " ".trim() = "")
+      // still work. We assign last so the most-recent wins for column 0.
+      const trimmedKey = headers[j];
+      if (trimmedKey !== key) obj[trimmedKey] = val;
     }
     rows.push(obj);
   }
