@@ -903,9 +903,13 @@ export async function fetchAllKpiData() {
     else if (labelLower === matchedMonth.toLowerCase() ||
              labelLower === MONTH_FULL[MONTH_SHORT.indexOf(matchedMonth)].toLowerCase() ||
              labelLower.endsWith(" actual")) {
-      b.actual = gross + tcFee;
+      // CANONICAL: use the sheet's <Month> Actual cell (col D) VERBATIM —
+      // do NOT add TC Fee on top. The team maintains this cell as the
+      // authoritative funded-revenue figure for the month. Adding TC Fee
+      // double-counts and produces values that don't match Company Financials.
+      b.actual = gross;
       // For prior-month "Actual" rows, also use as totalPossible (no forecast exists)
-      if (b.totalPossible === 0) b.totalPossible = gross + tcFee;
+      if (b.totalPossible === 0) b.totalPossible = gross;
     }
   }
   // Log what we found
@@ -914,6 +918,35 @@ export async function fetchAllKpiData() {
     .map(([mk, b]) => `${mk}: actual=$${b.actual.toLocaleString()}, assigned=$${b.assigned.toLocaleString()}, soon=$${b.soonAssigned.toLocaleString()}, tbd=$${b.contractedTbd.toLocaleString()}, total=$${b.totalPossible.toLocaleString()}`)
     .join(" | ");
   if (bucketLog) console.log(`[sheets] Rev Tracker buckets: ${bucketLog}`);
+
+  // ================================================================
+  // CANONICAL YTD ROWS — "Funded YTD" and "Current Deals UC Projected
+  // Year Total" from the bottom of the 2026 Revenue Tracker sheet.
+  // These cells are the team's authoritative numbers; the dashboard
+  // overrides any computed YTD with these values so it matches the
+  // Company Financials spreadsheet penny-for-penny.
+  // ----------------------------------------------------------------
+  let canonicalFundedYtd = 0;
+  let canonicalYearTotalProjected = 0;
+  for (const row of revSheet.rows) {
+    const label = String(row["Deal"] || "").trim().toLowerCase();
+    const gross = parseMoney(row["Gross Revenue"]);
+    if (!label || gross <= 0) continue;
+    if (label === "funded ytd" || label === "funded ytd:" || label.startsWith("funded ytd")) {
+      canonicalFundedYtd = gross;
+    } else if (label.includes("current deals") && label.includes("year total")) {
+      canonicalYearTotalProjected = gross;
+    } else if (label.includes("year total") && !label.includes("current")) {
+      // Fallback if label varies
+      if (canonicalYearTotalProjected === 0) canonicalYearTotalProjected = gross;
+    }
+  }
+  if (canonicalFundedYtd > 0) {
+    console.log(`[sheets] Canonical Funded YTD from sheet: $${canonicalFundedYtd.toLocaleString()}`);
+  }
+  if (canonicalYearTotalProjected > 0) {
+    console.log(`[sheets] Canonical Year Total Projected from sheet: $${canonicalYearTotalProjected.toLocaleString()}`);
+  }
 
   /** Classify a deal by name into a category (Phase 8 stage logic). */
   function classifyDeal(name: string): string {
@@ -1500,6 +1533,18 @@ export async function fetchAllKpiData() {
   // block below so the canonical Sales TOTAL column wins per user spec.
   if (funnelLookup.ytd.contracts    != null) ytd.contracts    = funnelLookup.ytd.contracts;
   if (funnelLookup.ytd.closed_deals != null) ytd.closed_deals = funnelLookup.ytd.closed_deals;
+
+  // CANONICAL REVENUE OVERRIDE — Funded YTD and Year Total Projected come
+  // directly from the team's authoritative summary rows at the bottom of
+  // the 2026 Revenue Tracker tab (the same numbers shown in Company
+  // Financials). These rows are what the user treats as truth, so we
+  // override the computed per-month sum with them.
+  if (canonicalFundedYtd > 0) {
+    ytd.revenue = canonicalFundedYtd;
+  }
+  if (canonicalYearTotalProjected > 0) {
+    ytd.revenue_total = canonicalYearTotalProjected;
+  }
 
   const profitValues = Object.values(salesMonthly.profit_per_deal).filter(
     (v) => v !== null && v !== 0
