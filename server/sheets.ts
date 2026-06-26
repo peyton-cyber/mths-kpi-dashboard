@@ -1602,7 +1602,8 @@ export async function fetchAllKpiData() {
   let currentLM: string | null = null;
 
   for (const row of salesKpis.rows) {
-    const metric = (row["KPIs (Q2 Targets)"] || "").trim();
+    // Use dynamic firstHeader so we tolerate header drift (e.g. " " vs "KPIs (Q2 Targets)")
+    const metric = (row["KPIs (Q2 Targets)"] || row[firstHeader] || "").trim();
 
     if (metric.startsWith("Lead Manager -")) {
       const name = metric.replace("Lead Manager -", "").trim();
@@ -1656,7 +1657,8 @@ export async function fetchAllKpiData() {
   let currentAQ: string | null = null;
 
   for (const row of salesKpis.rows) {
-    const metric = (row["KPIs (Q2 Targets)"] || "").trim();
+    // Use dynamic firstHeader so we tolerate header drift (e.g. " " vs "KPIs (Q2 Targets)")
+    const metric = (row["KPIs (Q2 Targets)"] || row[firstHeader] || "").trim();
 
     if (metric.startsWith("AQ Agent -")) {
       const name = metric.replace("AQ Agent -", "").trim();
