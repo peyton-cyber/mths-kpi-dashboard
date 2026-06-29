@@ -337,6 +337,38 @@ export async function registerRoutes(
     res.json({ status: "ok" });
   });
 
+  // ─── Debug: Rev Tracker green-row diagnostic ───
+  app.get("/api/debug/rev-tracker-green", requireAuth, async (_req, res) => {
+    try {
+      const { fetchColumnGreenFlags, fetchSheetRaw } = await import("./google-sheets-client");
+      const COMPANY_FINANCIALS = "1Ja5mBIMGL25jLDkrAUaqcnXhD3K-lJulOAK23b2zlHw";
+      const [flags, raw] = await Promise.all([
+        fetchColumnGreenFlags(COMPANY_FINANCIALS, "2026 Revenue Tracker", "D", 1000),
+        fetchSheetRaw(COMPANY_FINANCIALS, "2026 Revenue Tracker"),
+      ]);
+      const greenRows: Array<{ row: number; closeDate: string; deal: string; gross: string }> = [];
+      for (let i = 1; i < flags.length; i++) {
+        if (flags[i]) {
+          const r = raw[i - 1] || []; // raw is 0-indexed; row 1 = header at raw[0], so sheet row i = raw[i-1]
+          greenRows.push({
+            row: i,
+            closeDate: String(r[1] || ""),
+            deal: String(r[2] || ""),
+            gross: String(r[3] || ""),
+          });
+        }
+      }
+      res.json({
+        totalGreenCount: greenRows.length,
+        greenRows,
+        flagsLength: flags.length,
+        rawRowCount: raw.length,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "failed" });
+    }
+  });
+
   // ─── Bouncie OAuth callback ───
   // Bouncie redirects here with ?code=... after the user clicks Allow.
   // We exchange the code for a refresh token (one-time) and persist it.

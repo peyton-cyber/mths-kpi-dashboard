@@ -345,6 +345,13 @@ export async function fetchAllKpiData() {
 
   console.log(`[sheets] All sheets fetched in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
+  // Diagnostic: how many green rows were detected in Rev Tracker column D?
+  const greenRowNums: number[] = [];
+  for (let i = 1; i < revTrackerGreenFlags.length; i++) {
+    if (revTrackerGreenFlags[i]) greenRowNums.push(i);
+  }
+  console.log(`[rev-tracker] Green rows in 2026 Rev Tracker col D: count=${greenRowNums.length}, sample=${JSON.stringify(greenRowNums.slice(0, 30))}`);
+
   // ================================================================
   // 1. SALES KPIs — Primary monthly metrics (Jan–Apr+)
   // ================================================================
