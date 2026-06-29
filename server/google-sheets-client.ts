@@ -159,6 +159,76 @@ export async function fetchSheetRaw(
 }
 
 /**
+ * Fetch per-row cell background color flags for a specific column.
+ *
+ * Returns an array indexed by row number (1-based, matching sheet row numbers)
+ * with a boolean indicating whether the cell's effective background color is
+ * a shade of green. Index 0 is unused (returns false). White, orange, and any
+ * other fills return false.
+ *
+ * Used to filter the Rev Tracker for fully closed/funded deals — the team
+ * paints column D green when a deal is fully funded.
+ */
+export async function fetchColumnGreenFlags(
+  spreadsheetId: string,
+  sheetName: string,
+  columnLetter: string,
+  maxRows: number = 500
+): Promise<boolean[]> {
+  const client = getClient();
+  const range = `'${sheetName.replace(/'/g, "''")}'!${columnLetter}1:${columnLetter}${maxRows}`;
+  try {
+    const resp = await client.spreadsheets.get({
+      spreadsheetId,
+      ranges: [range],
+      fields:
+        "sheets.data.rowData.values.effectiveFormat.backgroundColor,sheets.data.rowData.values.userEnteredFormat.backgroundColor",
+      includeGridData: true,
+    });
+    const sheet0 = resp.data.sheets?.[0];
+    const rowData = sheet0?.data?.[0]?.rowData || [];
+    const flags: boolean[] = [false]; // index 0 unused
+    for (let i = 0; i < rowData.length; i++) {
+      const cell = rowData[i]?.values?.[0];
+      const bg =
+        cell?.effectiveFormat?.backgroundColor ||
+        cell?.userEnteredFormat?.backgroundColor;
+      flags.push(isGreenColor(bg));
+    }
+    // Pad to maxRows so callers can index safely
+    while (flags.length <= maxRows) flags.push(false);
+    return flags;
+  } catch (err: any) {
+    console.error(
+      `[google-sheets] fetchColumnGreenFlags ${sheetName}!${columnLetter} failed: ${(err.message || "").slice(0, 200)}`
+    );
+    return [];
+  }
+}
+
+/**
+ * Classify a Google Sheets cell background color as "green".
+ *
+ * Sheet color components are floats 0..1. We accept any color where green is
+ * clearly dominant over red and blue. White (1,1,1), orange (1,~0.6,~0.2),
+ * and unfilled cells are rejected.
+ */
+function isGreenColor(
+  bg: { red?: number; green?: number; blue?: number; alpha?: number } | undefined | null
+): boolean {
+  if (!bg) return false;
+  const r = bg.red ?? 0;
+  const g = bg.green ?? 0;
+  const b = bg.blue ?? 0;
+  // Ignore essentially white / very light cells.
+  if (r > 0.95 && g > 0.95 && b > 0.95) return false;
+  // Ignore fully empty / black (no fill applied).
+  if (r === 0 && g === 0 && b === 0) return false;
+  // Green dominant: g must exceed both r and b by a margin, and have some saturation.
+  return g > 0.4 && g >= r + 0.08 && g >= b + 0.08;
+}
+
+/**
  * Validate response has expected shape — same logic the old worker used.
  * Empty sheets count as a "soft fail" so we retry; truly empty tabs are rare.
  */

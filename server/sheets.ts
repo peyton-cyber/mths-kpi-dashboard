@@ -10,6 +10,7 @@ import { fetchAllSprintsThisYear, type SprintGoals } from "./asana-sprints";
 import {
   fetchSheetsParallel as fetchSheetsParallelImpl,
   fetchSheetRaw,
+  fetchColumnGreenFlags,
   type SheetResponse as ClientSheetResponse,
 } from "./google-sheets-client";
 // FUB removed per user request 2026-06-17: "can we make sure the system is
@@ -250,9 +251,10 @@ export async function fetchAllKpiData() {
   const prevRiseTab = `Q${_prevQuarter} ${_prevYear} - RISE`;
   console.log(`[sheets] RISE tabs (auto): current="${currentRiseTab}", prev="${prevRiseTab}"`);
 
-  // Fetch sheets, Asana sprint goals, Mailchimp, Weekly Marketing, and Bouncie in parallel.
+  // Fetch sheets, Asana sprint goals, Mailchimp, Weekly Marketing, Bouncie
+  // and the Rev Tracker column-D green-fill flags in parallel.
   // FUB fetchers removed — see header note.
-  const [sheets, sprintGoalsList, mailchimp, weeklyMarketing, bouncie] = await Promise.all([
+  const [sheets, sprintGoalsList, mailchimp, weeklyMarketing, bouncie, revTrackerGreenFlags] = await Promise.all([
     fetchSheetsParallel([
       { label: "mktg", spreadsheetId: MASTER_KPIS, sheetName: "Marketing 2026 KPIs" },
       { label: "deals", spreadsheetId: MASTER_KPIS, sheetName: "TOP 10 DEALS" },
@@ -315,6 +317,12 @@ export async function fetchAllKpiData() {
         unmappedRepsNote: ["Brandon", "Jeff H", "Ryan", "Jonathan"],
         locations: [],
       };
+    }),
+    // Rev Tracker column-D green-fill flags — used to filter for fully closed
+    // & funded deals when computing per-agent gross revenue.
+    fetchColumnGreenFlags(COMPANY_FINANCIALS, "2026 Revenue Tracker", "D", 1000).catch((e) => {
+      console.error(`[revTrackerGreen] fetch failed: ${(e?.message || "").slice(0, 200)}`);
+      return [] as boolean[];
     }),
   ]);
   console.log(`[bouncie] ${bouncie.reps.length} reps with devices, ${bouncie.vehiclesConnected} vehicles connected`);
@@ -805,12 +813,26 @@ export async function fetchAllKpiData() {
   const perAgentGrossByMonth: Record<string, Record<string, number>> = {};
   // Per-agent deal count by month
   const perAgentDealCountByMonth: Record<string, Record<string, number>> = {};
+  // ----------------------------------------------------------------
+  // CANONICAL Revenue Tracker per-agent gross (green-fill filter).
+  // Per spec (Jun 29, 2026): only count rows whose Column D (Gross Revenue)
+  // cell is painted GREEN — the team's marker for "fully closed & funded".
+  // White / orange / unfilled rows are skipped.
+  // The agent whitelist is fixed at 7 reps. All other commission columns are
+  // ignored for this aggregation.
+  // ----------------------------------------------------------------
+  const REV_TRACKER_AGENT_WHITELIST: ReadonlyArray<string> = [
+    "Korbin", "Brandon", "Jeff Henry", "Jacob", "TJ", "Ryan Craig", "Jeb Burchett",
+  ];
+  const perAgentFundedGrossByMonth: Record<string, Record<string, number>> = {};
+  const perAgentFundedDealCountByMonth: Record<string, Record<string, number>> = {};
   // Marketing source totals: { "FB Ads" → { gross, dealCount, perAgent: { Korbin: gross, ... } } }
   const marketingSourceRollup: Record<string, { gross: number; dealCount: number; perAgent: Record<string, number> }> = {};
   // NOTE: Sheet headers in the Rev Tracker have leading/trailing whitespace
   // ("Korbin ", " Gross Revenue ", etc.) but the fetcher trims all headers,
   // so these keys MUST be the trimmed forms.
-  const personCols = ["Korbin", "Brandon", "Jeff Henry", "TJ", "Ryan Craig",
+  // Jacob added per Jun 29 spec; missing previously, which dropped a real LM's revenue.
+  const personCols = ["Korbin", "Brandon", "Jeff Henry", "Jacob", "TJ", "Ryan Craig",
     "Jonathan Medlin", "Jeff Davidson", "Joseph Hooper", "Jeb Burchett", "Kalyn", "Dana"];
 
   /** Extract marketing source from "UC in Jan - FB Ads" → "FB Ads". */
@@ -1054,6 +1076,24 @@ export async function fetchAllKpiData() {
           perAgentGrossByMonth[name][mk] = (perAgentGrossByMonth[name][mk] || 0) + gross;
           if (!perAgentDealCountByMonth[name]) perAgentDealCountByMonth[name] = {};
           perAgentDealCountByMonth[name][mk] = (perAgentDealCountByMonth[name][mk] || 0) + 1;
+        }
+      }
+    }
+    // CANONICAL per-agent green-funded gross (Jun 29 spec):
+    //   - Row must be green-filled in Column D (fully closed & funded)
+    //   - Agent must be on the 7-person whitelist
+    //   - Agent's commission column on that row must be > 0
+    //   - Add row gross to agent total and increment deal count
+    const rowNum = parseInt(row._rowNumber || "0", 10);
+    const isGreen = rowNum > 0 && rowNum < revTrackerGreenFlags.length && revTrackerGreenFlags[rowNum] === true;
+    if (isGreen && gross > 0) {
+      for (const agent of REV_TRACKER_AGENT_WHITELIST) {
+        const val = parseMoney(row[agent]);
+        if (val > 0) {
+          if (!perAgentFundedGrossByMonth[agent]) perAgentFundedGrossByMonth[agent] = {};
+          perAgentFundedGrossByMonth[agent][mk] = (perAgentFundedGrossByMonth[agent][mk] || 0) + gross;
+          if (!perAgentFundedDealCountByMonth[agent]) perAgentFundedDealCountByMonth[agent] = {};
+          perAgentFundedDealCountByMonth[agent][mk] = (perAgentFundedDealCountByMonth[agent][mk] || 0) + 1;
         }
       }
     }
@@ -4019,6 +4059,8 @@ export async function fetchAllKpiData() {
     revTrackerRoas: {
       perAgentGross: perAgentGrossByMonth,
       perAgentDealCount: perAgentDealCountByMonth,
+      perAgentFundedGross: perAgentFundedGrossByMonth,
+      perAgentFundedDealCount: perAgentFundedDealCountByMonth,
       marketingSourceRollup,
     },
     bouncieDriveTime: bouncie.reps.length > 0 ? buildBouncieReal(bouncie) : buildBouncieMock(),
