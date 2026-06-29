@@ -1742,39 +1742,86 @@ export async function fetchAllKpiData() {
     "Ryan":             { canonical: "Ryan",     role: "AQ" },
     "Ryan Craig":       { canonical: "Ryan",     role: "AQ" },
   };
-  const repRows = new Map<string, {
+  // ----- Pick the month to display (auto-fallback) ------------------
+  // Start with the current KPI month. If it has zero data across every rep
+  // (e.g. early days of a new KPI month before the sheet is populated),
+  // walk backward through earlier months and use the most recent one with
+  // any data. This keeps the tile useful for every month of the year.
+  function buildRepRowsForMonth(mk: string): Map<string, {
     rep: string; role: "LM" | "AQ";
     netLeads: number; apptsSet: number; apptsExecuted: number;
     contracts: number; droppedContracts: number;
-  }>();
-  for (const [sheetName, lm] of Object.entries(leadManagers)) {
-    const map = SALES_SHEET_TO_CANONICAL[sheetName];
-    if (!map) continue;
-    const mk = currentMonthShort;
-    const existing = repRows.get(map.canonical) || {
-      rep: map.canonical, role: map.role,
-      netLeads: 0, apptsSet: 0, apptsExecuted: 0, contracts: 0, droppedContracts: 0,
-    };
-    existing.netLeads += lm.net_leads[mk] || 0;
-    existing.apptsSet += lm.appts_set[mk] || 0;
-    // Lead Manager "Contracted Appts" = appts that became contracts (an AQ outcome
-    // assigned back to the LM). Treat as the LM's "contracts" surrogate.
-    existing.contracts += lm.contracted[mk] || 0;
-    repRows.set(map.canonical, existing);
+  }> {
+    const rows = new Map<string, {
+      rep: string; role: "LM" | "AQ";
+      netLeads: number; apptsSet: number; apptsExecuted: number;
+      contracts: number; droppedContracts: number;
+    }>();
+    for (const [sheetName, lm] of Object.entries(leadManagers)) {
+      const map = SALES_SHEET_TO_CANONICAL[sheetName];
+      if (!map) continue;
+      const existing = rows.get(map.canonical) || {
+        rep: map.canonical, role: map.role,
+        netLeads: 0, apptsSet: 0, apptsExecuted: 0, contracts: 0, droppedContracts: 0,
+      };
+      existing.netLeads += lm.net_leads[mk] || 0;
+      existing.apptsSet += lm.appts_set[mk] || 0;
+      // Lead Manager "Contracted Appts" = appts that became contracts (an AQ outcome
+      // assigned back to the LM). Treat as the LM's "contracts" surrogate.
+      existing.contracts += lm.contracted[mk] || 0;
+      rows.set(map.canonical, existing);
+    }
+    for (const [sheetName, aq] of Object.entries(aqAgents)) {
+      const map = SALES_SHEET_TO_CANONICAL[sheetName];
+      if (!map) continue;
+      const existing = rows.get(map.canonical) || {
+        rep: map.canonical, role: map.role,
+        netLeads: 0, apptsSet: 0, apptsExecuted: 0, contracts: 0, droppedContracts: 0,
+      };
+      existing.apptsExecuted += aq.appts_executed[mk] || 0;
+      existing.contracts += aq.contracts[mk] || 0;
+      existing.droppedContracts += aq.dropped_contracts[mk] || 0;
+      rows.set(map.canonical, existing);
+    }
+    return rows;
   }
-  for (const [sheetName, aq] of Object.entries(aqAgents)) {
-    const map = SALES_SHEET_TO_CANONICAL[sheetName];
-    if (!map) continue;
-    const mk = currentMonthShort;
-    const existing = repRows.get(map.canonical) || {
-      rep: map.canonical, role: map.role,
-      netLeads: 0, apptsSet: 0, apptsExecuted: 0, contracts: 0, droppedContracts: 0,
-    };
-    existing.apptsExecuted += aq.appts_executed[mk] || 0;
-    existing.contracts += aq.contracts[mk] || 0;
-    existing.droppedContracts += aq.dropped_contracts[mk] || 0;
-    repRows.set(map.canonical, existing);
+  function rowsHaveData(rows: Map<string, { netLeads: number; apptsSet: number; apptsExecuted: number; contracts: number; droppedContracts: number; }>): boolean {
+    for (const r of rows.values()) {
+      if (r.netLeads || r.apptsSet || r.apptsExecuted || r.contracts || r.droppedContracts) return true;
+    }
+    return false;
   }
+  // Try current KPI month first, then walk backward through prior KPI months.
+  let displayMonth = currentMonthShort;
+  let repRows = buildRepRowsForMonth(displayMonth);
+  let fellBack = false;
+  if (!rowsHaveData(repRows)) {
+    for (let i = CURRENT_KPI_MONTH_IDX - 1; i >= 0; i--) {
+      const candidate = MONTH_SHORT[i];
+      const candidateRows = buildRepRowsForMonth(candidate);
+      if (rowsHaveData(candidateRows)) {
+        displayMonth = candidate;
+        repRows = candidateRows;
+        fellBack = true;
+        console.log(`[sheets] Per-rep funnel: current KPI month ${currentMonthShort} is empty — falling back to ${candidate}`);
+        break;
+      }
+    }
+  }
+  // Update the funnel header now that we know the actual display month.
+  perRepFunnel.windowLabel = fellBack
+    ? `${displayMonth} (latest month with data — ${currentMonthShort} pending)`
+    : `${displayMonth} (current KPI month)`;
+  perRepFunnel.closingsMonth = displayMonth;
+  // Recompute closings for the chosen display month (if we fell back).
+  const displayClosingsByRep: Record<string, number> = {};
+  if (fellBack) {
+    for (const [sheetName, canonical] of Object.entries(SHEET_TO_CANONICAL_FUNNEL)) {
+      const byMonth = perAgentDealCountByMonth[sheetName] || {};
+      displayClosingsByRep[canonical] = byMonth[displayMonth] || 0;
+    }
+  }
+  const closingsForDisplay = fellBack ? displayClosingsByRep : closingsThisMonthByRep;
   // Always emit our 6 canonical reps in a stable order (matches dashboards).
   const REP_ORDER = ["Brandon", "Korbin", "Jeff H", "TJ", "Ryan", "Jonathan"];
   for (const name of REP_ORDER) {
@@ -1790,13 +1837,13 @@ export async function fetchAllKpiData() {
       apptsExecuted: r.apptsExecuted,
       contracts: r.contracts,
       droppedContracts: r.droppedContracts,
-      closings: closingsThisMonthByRep[r.rep] || 0,
+      closings: closingsForDisplay[r.rep] || 0,
       leadToAppt: r.netLeads > 0 ? Math.round((r.apptsSet / r.netLeads) * 1000) / 10 : 0,
       apptToContract: r.apptsSet > 0 ? Math.round((r.contracts / r.apptsSet) * 1000) / 10 : 0,
       role: r.role,
     });
   }
-  console.log(`[sheets] Per-rep funnel (sheet ${currentMonthShort}): ${perRepFunnel.reps.length} reps, totals net-leads=${perRepFunnel.reps.reduce((s, r) => s + r.netLeads, 0)}, contracts=${perRepFunnel.reps.reduce((s, r) => s + r.contracts, 0)}, closings=${perRepFunnel.reps.reduce((s, r) => s + r.closings, 0)}`);
+  console.log(`[sheets] Per-rep funnel (sheet ${displayMonth}${fellBack ? " — fallback from " + currentMonthShort : ""}): ${perRepFunnel.reps.length} reps, totals net-leads=${perRepFunnel.reps.reduce((s, r) => s + r.netLeads, 0)}, contracts=${perRepFunnel.reps.reduce((s, r) => s + r.contracts, 0)}, closings=${perRepFunnel.reps.reduce((s, r) => s + r.closings, 0)}`);
 
   // ================================================================
   // 4b. RISE WEEKLY METRICS — From Sales Stoplight Report
