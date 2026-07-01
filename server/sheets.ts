@@ -3194,8 +3194,9 @@ export async function fetchAllKpiData() {
       yearBuilt: parseInt2(r[COL_YEAR_BUILT]),
       leadSource: (r[COL_LEAD_SRC] || "").trim(),
       dealType: (r[COL_DEAL_TYPE] || "").trim(),
-      leadManager: (r[COL_LEAD_MGR] || "").trim(),
-      aqAgent: (r[COL_AQ] || "").trim(),
+      // Jonathan removed from rep roster — blank out his name on historical deals.
+      leadManager: /jo(h)?nathan/i.test((r[COL_LEAD_MGR] || "").trim()) ? "" : (r[COL_LEAD_MGR] || "").trim(),
+      aqAgent: /jo(h)?nathan/i.test((r[COL_AQ] || "").trim()) ? "" : (r[COL_AQ] || "").trim(),
       dispoManager: (r[COL_DISPO] || "").trim(),
       tc: (r[COL_TC] || "").trim(),
       purchasePrice: parseMoney(r[COL_PRICE]),
@@ -3822,11 +3823,17 @@ export async function fetchAllKpiData() {
   console.log(`[lead-sources] (sheet) ${leadSourcesData.sources.length} sources, ${leadSourcesData.totalLeads} leads, ${leadSourcesData.totalContracts} contracts, $${leadSourcesData.totalSpend.toLocaleString()} spend`);
 
   // ---------- KPI Ownership Map ----------
+  // Jonathan removed from rep roster — strip his name from owner lists.
+  const stripJonathanFromOwners = (owners: string): string =>
+    owners
+      .split(/\s*,\s*/)
+      .filter(o => !/jo(h)?nathan/i.test(o))
+      .join(", ");
   const ownerRows = sheets.kpiOwners?.rows || [];
   const kpiOwnership = {
     map: ownerRows.map(r => ({
       kpi:     String(r["KPI"] || "").trim(),
-      owners:  String(r["Owner(s)"] || "").trim(),
+      owners:  stripJonathanFromOwners(String(r["Owner(s)"] || "").trim()),
       team:    String(r["Team"] || "").trim(),
       cadence: String(r["Cadence"] || "").trim(),
       target:  String(r["Target"] || "").trim(),

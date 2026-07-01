@@ -71,6 +71,8 @@ const KNOWN_NAMES: Record<string, string> = {
 function normalizeName(s: string): string {
   const trimmed = s.trim();
   if (!trimmed) return "";
+  // Jonathan/Johnathan removed from rep roster — scrub his name everywhere.
+  if (/jo(h)?nathan/i.test(trimmed)) return "";
   const key = trimmed.toLowerCase();
   if (KNOWN_NAMES[key]) return KNOWN_NAMES[key];
   // Generic Title Case as fallback
