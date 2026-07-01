@@ -72,7 +72,7 @@ export type DispoFubData = {
 
 // FUB user-name keywords that identify the dispo-side owner of a deal.
 // Verified against live FUB data (May 2026): the dispo team in FUB is
-// Jeff Davidson, Klint Ruud, Kalyn Kratzer, Jonathan Medlin (TC support),
+// Jeff Davidson, Klint Ruud, Kalyn Kratzer,
 // plus Joseph Hooper and Jeb Burchett who were originally listed but
 // don't show up in many recent deal user arrays. Including all known
 // dispo names so the picker prefers them over AQ reps.

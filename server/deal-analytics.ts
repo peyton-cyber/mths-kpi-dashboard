@@ -63,8 +63,6 @@ const KNOWN_NAMES: Record<string, string> = {
   "jeff h": "Jeff Henry",
   "jeff henry": "Jeff Henry",
   "jeff hentry": "Jeff Henry",
-  "johnathan medlin": "Jonathan Medlin",
-  "jonathan medlin": "Jonathan Medlin",
   "korbin hoffmann": "Korbin Hoffmann",
   "brandon speer": "Brandon Speer",
   "ryan craig": "Ryan Craig",

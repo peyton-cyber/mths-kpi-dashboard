@@ -158,7 +158,7 @@ export default function AcqScorecard() {
         title="Acquisitions Scorecard"
       />
 
-      <AlertBanner filterPersons={["Korbin", "TJ", "Ryan", "Brandon", "Jeff", "Jonathan"]} />
+      <AlertBanner filterPersons={["Korbin", "TJ", "Ryan", "Brandon", "Jeff"]} />
 
       {!hasData && (
         <Card padding="p-6">

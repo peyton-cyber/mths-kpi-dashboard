@@ -7,16 +7,16 @@
  *   - Calls (FUB /calls): per-rep call count (touch points proxy) + talk time
  *   - Deals in Acquisition pipeline (id=2): per-rep offers & contracts by stage
  *
- * Rep set (per Phase 8 decision): Korbin, Brandon, Jeff H, TJ, Ryan, Jonathan
+ * Rep set (per Phase 8 decision): Korbin, Brandon, Jeff H, TJ, Ryan
  *
  * Output is merged into `acquisitionsActivity.agents[]` in sheets.ts.
  */
 
 const FUB_BASE = "https://api.followupboss.com/v1";
 
-// FUB userIds for the 6 reporting reps (verified May 2026 via /users).
+// FUB userIds for the 5 reporting reps (verified May 2026 via /users).
 // startDate is the FUB user's `created` timestamp — used to pro-rate YTD
-// metrics so Jonathan/Ryan/TJ (who started mid-year) aren't compared
+// metrics so Ryan/TJ (who started mid-year) aren't compared
 // against full-year peers without context.
 export const AQ_REPS: { fubUserId: number; canonical: string; startDate: string }[] = [
   { fubUserId: 18, canonical: "Brandon",  startDate: "2023-08-28" },
@@ -24,7 +24,6 @@ export const AQ_REPS: { fubUserId: number; canonical: string; startDate: string 
   { fubUserId: 39, canonical: "Jeff H",   startDate: "2025-02-05" },
   { fubUserId: 50, canonical: "TJ",       startDate: "2025-12-05" },
   { fubUserId: 51, canonical: "Ryan",     startDate: "2026-01-24" },
-  { fubUserId: 52, canonical: "Jonathan", startDate: "2026-02-16" },
 ];
 
 export const REP_START_BY_CANONICAL: Record<string, string> = Object.fromEntries(
@@ -41,7 +40,6 @@ for (const r of AQ_REPS) {
     "Jeff H": ["jeff h", "jeff henry"],
     TJ: ["tj ", "tj neal"],
     Ryan: ["ryan craig", "ryan "],
-    Jonathan: ["jonathan", "johnathan", "jon medlin"],
   };
   for (const v of (variants[r.canonical] || [])) {
     REP_BY_NAME_KEY.set(v.toLowerCase(), r.canonical);
@@ -192,7 +190,7 @@ async function fetchDispoPipelineDeals(apiKey: string, signal?: AbortSignal) {
   );
 }
 
-// Novations (pipeline 3): Jeff H & Jonathan run a lot of these. Each entry counts as a contract.
+// Novations (pipeline 3): Jeff H runs a lot of these. Each entry counts as a contract.
 async function fetchNovationsDeals(apiKey: string, signal?: AbortSignal) {
   return fubPaginate<any>(
     apiKey,
@@ -428,7 +426,7 @@ export async function fetchAcqFubData(apiKey: string, windowDays = 30): Promise<
 
     // ----- Novations / Flips / Listing Referrals: count each deal as a contract
     // for any rep on the deal whose enteredStageAt or earliest activity is in window.
-    // Jeff H & Jonathan close a meaningful share of these — without them they show 0.
+    // Jeff H closes a meaningful share of these — without them they show 0.
     const sideDeals = [...novationDeals, ...flipDeals, ...listingReferralDeals];
     for (const d of sideDeals) {
       const enteredStageAt = d.enteredStageAt ? new Date(d.enteredStageAt).getTime() : 0;

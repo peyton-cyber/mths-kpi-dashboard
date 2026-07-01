@@ -303,7 +303,7 @@ export default function Acquisitions() {
         </div>
       </PageHeader>
 
-      <AlertBanner filterPersons={["Korbin", "TJ", "Ryan", "Brandon", "Jeff", "Jonathan"]} />
+      <AlertBanner filterPersons={["Korbin", "TJ", "Ryan", "Brandon", "Jeff"]} />
 
       {/* Live AQ field activity — map + windshield time. Stub data until Bouncie is wired. */}
       <LiveRepMap />

@@ -28,7 +28,6 @@ const ROSTER: Person[] = [
   { name: "Ryan",     slug: "ryan",     role: "AQA",          team: "Acquisitions" },
   { name: "Brandon",  slug: "brandon",  role: "Lead Manager", team: "Acquisitions" },
   { name: "Jeff H",   slug: "jeff-h",   role: "Lead Manager", team: "Acquisitions" },
-  { name: "Jonathan", slug: "jonathan", role: "Lead Manager", team: "Acquisitions" },
   { name: "Trey",     slug: "trey",     role: "Leadership",   team: "Leadership" },
   { name: "Jordan",   slug: "jordan",   role: "Leadership",   team: "Leadership" },
 ];

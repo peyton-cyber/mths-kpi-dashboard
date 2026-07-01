@@ -165,7 +165,6 @@ export interface KpiData {
       jeff_h: { commissions: Record<string, number> };
       tj: { commissions: Record<string, number> };
       ryan: { commissions: Record<string, number> };
-      jonathan: { commissions: Record<string, number> };
     };
     leadManagers: Record<string, {
       net_leads: Record<string, number>;

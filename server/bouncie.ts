@@ -166,7 +166,7 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
     windowDays,
     reps: [],
     vehiclesConnected: 0,
-    unmappedRepsNote: ["Brandon", "Jeff H", "Ryan", "Jonathan"],
+    unmappedRepsNote: ["Brandon", "Jeff H", "Ryan"],
     locations: [],
   };
   const token = await getAccessToken();
@@ -291,7 +291,7 @@ export async function fetchBouncieData(windowDays = 30): Promise<BouncieData> {
     windowDays,
     reps: Object.values(repStats),
     vehiclesConnected: vehicles.length,
-    unmappedRepsNote: ["Brandon", "Jeff H", "Ryan", "Jonathan"].filter(
+    unmappedRepsNote: ["Brandon", "Jeff H", "Ryan"].filter(
       r => !Object.values(REP_BY_IMEI).includes(r)
     ),
     locations,

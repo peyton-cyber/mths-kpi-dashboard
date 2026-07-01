@@ -22,7 +22,6 @@ const REP_COLOR: Record<string, string> = {
   Brandon: "#f59e0b",   // amber
   "Jeff H": "#ef4444",  // red
   Ryan: "#8b5cf6",      // purple
-  Jonathan: "#ec4899",  // pink
 };
 
 function carIcon(color: string, heading: number, isRunning: boolean) {

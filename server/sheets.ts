@@ -29,7 +29,6 @@ const AQ_REPS: { canonical: string; startDate: string }[] = [
   { canonical: "Jeff H",   startDate: "2025-02-05" },
   { canonical: "TJ",       startDate: "2025-12-05" },
   { canonical: "Ryan",     startDate: "2026-01-24" },
-  { canonical: "Jonathan", startDate: "2026-02-16" },
 ];
 import { fetchMailchimpData, type MailchimpData } from "./mailchimp";
 import { fetchWeeklyMarketingData, type WeeklyMarketingData } from "./weeklyMarketing";
@@ -314,7 +313,7 @@ export async function fetchAllKpiData() {
         windowDays: 30,
         reps: [],
         vehiclesConnected: 0,
-        unmappedRepsNote: ["Brandon", "Jeff H", "Ryan", "Jonathan"],
+        unmappedRepsNote: ["Brandon", "Jeff H", "Ryan"],
         locations: [],
       };
     }),
@@ -833,7 +832,7 @@ export async function fetchAllKpiData() {
   // so these keys MUST be the trimmed forms.
   // Jacob added per Jun 29 spec; missing previously, which dropped a real LM's revenue.
   const personCols = ["Korbin", "Brandon", "Jeff Henry", "Jacob", "TJ", "Ryan Craig",
-    "Jonathan Medlin", "Jeff Davidson", "Joseph Hooper", "Jeb Burchett", "Kalyn", "Dana"];
+    "Jeff Davidson", "Joseph Hooper", "Jeb Burchett", "Kalyn", "Dana"];
 
   /** Extract marketing source from "UC in Jan - FB Ads" → "FB Ads". */
   function parseMarketingSource(raw: string): string {
@@ -1316,7 +1315,7 @@ export async function fetchAllKpiData() {
   const currentMonthShort = MONTH_SHORT[CURRENT_KPI_MONTH_IDX];
   const SHEET_TO_CANONICAL_FUNNEL: Record<string, string> = {
     "Korbin": "Korbin", "Brandon": "Brandon", "Jeff Henry": "Jeff H",
-    "TJ": "TJ", "Ryan Craig": "Ryan", "Jonathan Medlin": "Jonathan",
+    "TJ": "TJ", "Ryan Craig": "Ryan",
   };
   const closingsThisMonthByRep: Record<string, number> = {};
   for (const [sheetName, canonical] of Object.entries(SHEET_TO_CANONICAL_FUNNEL)) {
@@ -1772,9 +1771,6 @@ export async function fetchAllKpiData() {
     "Jeff Henry":       { canonical: "Jeff H",   role: "LM" },
     "Jeff H":           { canonical: "Jeff H",   role: "LM" },
     "Jeff":             { canonical: "Jeff H",   role: "LM" },
-    "Johnathan":        { canonical: "Jonathan", role: "LM" },
-    "Jonathan":         { canonical: "Jonathan", role: "LM" },
-    "Jonathan Medlin":  { canonical: "Jonathan", role: "LM" },
     // AQ Agents
     "Korbin":           { canonical: "Korbin",   role: "AQ" },
     "Korbin Karst":     { canonical: "Korbin",   role: "AQ" },
@@ -1862,8 +1858,8 @@ export async function fetchAllKpiData() {
     }
   }
   const closingsForDisplay = fellBack ? displayClosingsByRep : closingsThisMonthByRep;
-  // Always emit our 6 canonical reps in a stable order (matches dashboards).
-  const REP_ORDER = ["Brandon", "Korbin", "Jeff H", "TJ", "Ryan", "Jonathan"];
+  // Always emit our 5 canonical reps in a stable order (matches dashboards).
+  const REP_ORDER = ["Brandon", "Korbin", "Jeff H", "TJ", "Ryan"];
   for (const name of REP_ORDER) {
     const r = repRows.get(name) || {
       rep: name,
@@ -1932,9 +1928,9 @@ export async function fetchAllKpiData() {
     // Parse weekly performance metrics section
     // In the RISE sheet, each person has multiple rows with the same OWNER name.
     // The OWNER field appears on EVERY row for that person (not just the first).
-    // Lead Managers: Jeff H, Brandon, Jonathan
+    // Lead Managers: Jeff H, Brandon
     // AQ Agents: Korbin, Ryan, TJ
-    const lmNames = ["jeff h", "brandon", "jonathan"];
+    const lmNames = ["jeff h", "brandon"];
     const aqNames = ["korbin", "ryan", "tj"];
 
     let weeklySection = false;
@@ -2898,7 +2894,6 @@ export async function fetchAllKpiData() {
       jeff_h: { commissions: perPersonCommissions["Jeff Henry"] || {} },
       tj: { commissions: perPersonCommissions["TJ"] || {} },
       ryan: { commissions: perPersonCommissions["Ryan Craig"] || {} },
-      jonathan: { commissions: perPersonCommissions["Jonathan Medlin"] || {} },
     },
     leadManagers,
     aqAgents,
@@ -3575,7 +3570,7 @@ export async function fetchAllKpiData() {
   // FUB overlay removed (user said FUB is inaccurate). Sheet is now the sole
   // source for AQ stats; Bouncie still provides drive/idle time for the 2
   // reps with paired devices (Korbin, TJ).
-  // The 6-rep canonical AQ list (Korbin, Brandon, Jeff H, TJ, Ryan, Jonathan)
+  // The 5-rep canonical AQ list (Korbin, Brandon, Jeff H, TJ, Ryan)
   // is enforced via REP_ORDER and the Sales 2026 KPIs per-rep parser above.
   const acqRepsBySheet = new Map<string, AcqAgent>();
   for (const a of Object.values(byAgent)) {
@@ -3587,12 +3582,13 @@ export async function fetchAllKpiData() {
     else if (lower.includes("jeff h") || lower.includes("jeff henry")) canonical = "Jeff H";
     else if (lower.startsWith("tj")) canonical = "TJ";
     else if (lower.includes("ryan")) canonical = "Ryan";
-    else if (lower.includes("jonathan") || lower.includes("johnathan")) canonical = "Jonathan";
+    // Skip Jonathan/Johnathan — removed from rep roster.
+    else if (lower.includes("jonathan") || lower.includes("johnathan")) continue;
     acqRepsBySheet.set(canonical, { ...a, agent: canonical });
   }
 
   // Rev Tracker per-rep deal count (YTD authoritative source). Maps sheet col headers
-  // ("Korbin", "Brandon", "Jeff Henry", "TJ", "Ryan Craig", "Jonathan Medlin") to
+  // ("Korbin", "Brandon", "Jeff Henry", "TJ", "Ryan Craig") to
   // canonical rep names. Each non-empty commission entry = one deal credited.
   const SHEET_TO_CANONICAL: Record<string, string> = {
     "Korbin": "Korbin",
@@ -3600,13 +3596,12 @@ export async function fetchAllKpiData() {
     "Jeff Henry": "Jeff H",
     "TJ": "TJ",
     "Ryan Craig": "Ryan",
-    "Jonathan Medlin": "Jonathan",
   };
   const ytdDealsByRep: Record<string, number> = {
-    Korbin: 0, Brandon: 0, "Jeff H": 0, TJ: 0, Ryan: 0, Jonathan: 0,
+    Korbin: 0, Brandon: 0, "Jeff H": 0, TJ: 0, Ryan: 0,
   };
   const monthlyDealsByRep: Record<string, Record<string, number>> = {
-    Korbin: {}, Brandon: {}, "Jeff H": {}, TJ: {}, Ryan: {}, Jonathan: {},
+    Korbin: {}, Brandon: {}, "Jeff H": {}, TJ: {}, Ryan: {},
   };
   for (const [sheetName, canonical] of Object.entries(SHEET_TO_CANONICAL)) {
     const byMonth = perAgentDealCountByMonth[sheetName] || {};
@@ -4127,7 +4122,7 @@ function buildBouncieReal(bouncie: BouncieData) {
 }
 
 function buildBouncieMock() {
-  const agents = ["Korbin", "TJ", "Ryan", "Brandon", "Jeff Henry", "Jonathan Medlin"];
+  const agents = ["Korbin", "TJ", "Ryan", "Brandon", "Jeff Henry"];
   const today = new Date();
   const days: { date: string; agent: string; driveMinutes: number; miles: number; stops: number }[] = [];
   // Deterministic pseudo-random based on day-of-year + agent
