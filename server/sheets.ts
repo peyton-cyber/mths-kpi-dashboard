@@ -21,7 +21,7 @@ import {
 // Deal KPIs, Marketing 2026 KPIs) and Rev Tracker.
 import { fetchBouncieData, type BouncieData } from "./bouncie";
 
-// 6-rep canonical AQ list — kept locally so we retain tenure context that
+// 5-rep canonical AQ list — kept locally so we retain tenure context that
 // FUB used to provide. Start dates match what FUB had on file.
 const AQ_REPS: { canonical: string; startDate: string }[] = [
   { canonical: "Brandon",  startDate: "2023-08-28" },
@@ -4267,8 +4267,9 @@ function isDataValid(data: Awaited<ReturnType<typeof fetchAllKpiData>>): boolean
   if (!data.activeMonths || data.activeMonths.length === 0) return false;
   // Must have non-zero YTD revenue
   if (!data.ytd || data.ytd.revenue <= 0) return false;
-  // Must have marketing channels
-  if (!data.marketingChannels || data.marketingChannels.length === 0) return false;
+  // Marketing channels are NOT required — a fresh month may legitimately have
+  // 0 channels populated yet. Previously this check caused validation to fail
+  // on the 1st of the month, blocking cache warm-up entirely.
   return true;
 }
 
