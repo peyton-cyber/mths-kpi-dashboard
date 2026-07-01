@@ -219,6 +219,9 @@ export function buildCurrentDeals(rows: any[]): {
   const byDealType: Record<string, { count: number; projectedRevenue: number }> = {};
   const byLeadManager: Record<string, { count: number; projectedRevenue: number }> = {};
   const byAqAgent: Record<string, { count: number; projectedRevenue: number }> = {};
+  // Jonathan/Johnathan removed from rep roster — collapse to "Unspecified".
+  const stripJonathan = (name: string): string =>
+    /jo(h)?nathan/i.test(name) ? "" : name;
   for (const d of activeDeals) {
     const bump = (m: typeof byPhase, k: string) => {
       const key = k || "Unspecified";
@@ -228,8 +231,8 @@ export function buildCurrentDeals(rows: any[]): {
     };
     bump(byPhase, d.phase);
     bump(byDealType, d.dealType);
-    bump(byLeadManager, d.leadManager);
-    bump(byAqAgent, d.aqAgent);
+    bump(byLeadManager, stripJonathan(d.leadManager));
+    bump(byAqAgent, stripJonathan(d.aqAgent));
   }
 
   const totalProjectedRevenue = activeDeals.reduce((s, d) => s + (d.projectedRevenue || 0), 0);
@@ -356,11 +359,16 @@ export function buildLmAqCombos(rows: any[], windowDays: number = 90): {
 } {
   const cutoff = Date.now() - windowDays * 86400000;
   const stat: Record<string, { lm: string; aq: string; deals: number; profit: number }> = {};
+  // Jonathan/Johnathan removed from rep roster — skip any combo where he appears.
+  const isJonathan = (n: string) => /jo(h)?nathan/i.test(n);
   for (const r of rows) {
     const cd = parseFlexDate(clean(r[COL.closeDate]));
     if (!cd || cd.getTime() < cutoff) continue;
-    const lm = normalizeName(clean(r[COL.leadManager])) || "Unassigned";
-    const aq = normalizeName(clean(r[COL.aqAgent])) || "Unassigned";
+    const lmRaw = normalizeName(clean(r[COL.leadManager]));
+    const aqRaw = normalizeName(clean(r[COL.aqAgent]));
+    if (isJonathan(lmRaw) || isJonathan(aqRaw)) continue;
+    const lm = lmRaw || "Unassigned";
+    const aq = aqRaw || "Unassigned";
     const key = `${lm}__${aq}`;
     if (!stat[key]) stat[key] = { lm, aq, deals: 0, profit: 0 };
     stat[key].deals += 1;

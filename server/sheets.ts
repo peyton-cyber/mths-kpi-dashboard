@@ -1699,7 +1699,11 @@ export async function fetchAllKpiData() {
     const label = String(row[0] || "").trim();
     if (!label) continue;
 
+    // Skip Jonathan/Johnathan rows entirely — removed from rep roster.
+    const isJonathan = /jo(h)?nathan/i.test(label);
+
     if (label.startsWith("Lead Manager -")) {
+      if (isJonathan) { _currentRepName = null; _currentRepRole = null; continue; }
       _currentRepName = label.replace("Lead Manager -", "").trim();
       _currentRepRole = "LM";
       if (_currentRepName && !leadManagers[_currentRepName]) {
@@ -1710,6 +1714,7 @@ export async function fetchAllKpiData() {
       continue;
     }
     if (label.startsWith("AQ Agent -")) {
+      if (isJonathan) { _currentRepName = null; _currentRepRole = null; continue; }
       _currentRepName = label.replace("AQ Agent -", "").trim();
       _currentRepRole = "AQ";
       if (_currentRepName && !aqAgents[_currentRepName]) {
